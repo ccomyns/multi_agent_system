@@ -1,0 +1,24 @@
+#!/bin/bash
+set -uo pipefail
+
+exec > >(tee /var/log/stress-test.log | logger -t stress-test -s 2>/dev/console) 2>&1
+
+echo "${stress_script}" | base64 --decode > /opt/stress_test.py
+chmod 0755 /opt/stress_test.py
+
+dnf install -y python3-pip
+python3 -m pip install --no-cache-dir boto3
+
+export FUNCTION_NAME="${function_name}"
+export AUDIT_BUCKET_NAME="${audit_bucket}"
+export ORCHESTRATOR_ID="stress-$(cat /var/lib/cloud/data/instance-id)"
+
+python3 /opt/stress_test.py
+test_exit=$?
+
+aws s3 cp /var/log/stress-test.log \
+  "s3://${audit_bucket}/stress-tests/$${ORCHESTRATOR_ID}.log" \
+  --sse AES256 || true
+
+echo "stress test exit code: $test_exit"
+shutdown -h now
