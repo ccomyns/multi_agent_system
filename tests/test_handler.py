@@ -80,6 +80,59 @@ class SpawnTests(unittest.TestCase):
         self.assertEqual(results[-1]["body"]["error"], "active_subagent_limit_reached")
         self.assertEqual(active_count, 8)
 
+    def test_reservation_persists_subagent_launch_metadata(self) -> None:
+        dynamodb = Mock()
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "SUBAGENT_AMI_ID": "ami-browser-tools",
+                    "SUBAGENT_INSTANCE_TYPE": "t3.large",
+                    "SUBAGENT_TTL_SECONDS": "1800",
+                },
+            ),
+            patch.object(handler, "_client", return_value=dynamodb),
+        ):
+            reserved = handler._reserve_slot(
+                "orchestrator-1",
+                "agent-1",
+                "2026-01-01T00:00:00Z",
+            )
+
+        self.assertTrue(reserved)
+        put_item = dynamodb.transact_write_items.call_args.kwargs["TransactItems"][1][
+            "Put"
+        ]["Item"]
+        self.assertEqual(put_item["ami_id"], {"S": "ami-browser-tools"})
+        self.assertEqual(put_item["instance_type"], {"S": "t3.large"})
+        self.assertEqual(put_item["ttl_seconds"], {"N": "1800"})
+
+    def test_launch_uses_prebaked_ami_t3_large_and_thirty_minute_ttl(self) -> None:
+        ec2 = Mock()
+        ec2.run_instances.return_value = {"Instances": [{"InstanceId": "i-subagent"}]}
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "SUBAGENT_AMI_ID": "ami-browser-tools",
+                    "SUBAGENT_INSTANCE_PROFILE_NAME": "subagent-profile",
+                    "SUBAGENT_INSTANCE_TYPE": "t3.large",
+                    "SUBAGENT_SECURITY_GROUP_ID": "sg-subagents",
+                    "SUBAGENT_SUBNET_ID": "subnet-public",
+                    "SUBAGENT_TTL_SECONDS": "1800",
+                },
+            ),
+            patch.object(handler, "_client", return_value=ec2),
+        ):
+            instance_id = handler._launch_instance("orchestrator-1", "agent-1")
+
+        self.assertEqual(instance_id, "i-subagent")
+        launch = ec2.run_instances.call_args.kwargs
+        self.assertEqual(launch["ImageId"], "ami-browser-tools")
+        self.assertEqual(launch["InstanceType"], "t3.large")
+        self.assertIn("sleep 1800", launch["UserData"])
+        self.assertNotIn("BlockDeviceMappings", launch)
+
     def test_repeated_request_id_is_idempotent(self) -> None:
         existing = {
             "state": "RUNNING",

@@ -58,6 +58,14 @@ resource "aws_security_group" "instances" {
   }
 
   egress {
+    description = "HTTP package repositories used during AMI builds"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
     description = "DNS over UDP"
     from_port   = 53
     to_port     = 53

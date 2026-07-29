@@ -94,6 +94,9 @@ def _reserve_slot(orchestrator_id: str, agent_id: str, created_at: str) -> bool:
         **_agent_key(orchestrator_id, agent_id),
         "orchestrator_id": orchestrator_id,
         "agent_id": agent_id,
+        "ami_id": os.environ.get("SUBAGENT_AMI_ID", "unknown"),
+        "instance_type": os.environ.get("SUBAGENT_INSTANCE_TYPE", "t3.large"),
+        "ttl_seconds": int(os.environ.get("SUBAGENT_TTL_SECONDS", "1800")),
         "active": True,
         "state": "PROVISIONING",
         "created_at": created_at,
@@ -219,10 +222,10 @@ shutdown -h now
 
 
 def _launch_instance(orchestrator_id: str, agent_id: str) -> str:
-    ttl_seconds = int(os.environ.get("SUBAGENT_TTL_SECONDS", "900"))
+    ttl_seconds = int(os.environ.get("SUBAGENT_TTL_SECONDS", "1800"))
     response = _client("ec2").run_instances(
         ImageId=os.environ["SUBAGENT_AMI_ID"],
-        InstanceType=os.environ.get("SUBAGENT_INSTANCE_TYPE", "t3.micro"),
+        InstanceType=os.environ.get("SUBAGENT_INSTANCE_TYPE", "t3.large"),
         MinCount=1,
         MaxCount=1,
         ClientToken=agent_id,
@@ -242,17 +245,6 @@ def _launch_instance(orchestrator_id: str, agent_id: str) -> str:
             "HttpTokens": "required",
             "HttpPutResponseHopLimit": 1,
         },
-        BlockDeviceMappings=[
-            {
-                "DeviceName": "/dev/xvda",
-                "Ebs": {
-                    "DeleteOnTermination": True,
-                    "Encrypted": True,
-                    "VolumeSize": 8,
-                    "VolumeType": "gp3",
-                },
-            }
-        ],
         TagSpecifications=[
             {
                 "ResourceType": "instance",
@@ -409,6 +401,9 @@ def _spawn(event: dict[str, Any]) -> dict[str, Any]:
         "orchestrator_id": orchestrator_id,
         "agent_id": agent_id,
         "instance_id": instance_id,
+        "ami_id": os.environ.get("SUBAGENT_AMI_ID", "unknown"),
+        "instance_type": os.environ.get("SUBAGENT_INSTANCE_TYPE", "t3.large"),
+        "ttl_seconds": int(os.environ.get("SUBAGENT_TTL_SECONDS", "1800")),
         "created_at": created_at,
         "launched_at": launched_at,
     }

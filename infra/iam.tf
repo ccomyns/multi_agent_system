@@ -103,9 +103,8 @@ resource "aws_iam_role_policy" "subagent" {
   })
 }
 
-resource "aws_iam_role" "stress_test" {
-  count = var.create_stress_test_instance ? 1 : 0
-  name  = "${var.project_name}-stress-test"
+resource "aws_iam_role" "orchestrator" {
+  name = "${var.project_name}-orchestrator"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -119,16 +118,19 @@ resource "aws_iam_role" "stress_test" {
   })
 }
 
-resource "aws_iam_instance_profile" "stress_test" {
-  count = var.create_stress_test_instance ? 1 : 0
-  name  = "${var.project_name}-stress-test"
-  role  = aws_iam_role.stress_test[0].name
+resource "aws_iam_instance_profile" "orchestrator" {
+  name = "${var.project_name}-orchestrator"
+  role = aws_iam_role.orchestrator.name
 }
 
-resource "aws_iam_role_policy" "stress_test" {
-  count = var.create_stress_test_instance ? 1 : 0
-  name  = "invoke-and-report"
-  role  = aws_iam_role.stress_test[0].id
+resource "aws_iam_role_policy_attachment" "orchestrator_ssm" {
+  role       = aws_iam_role.orchestrator.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_role_policy" "orchestrator" {
+  name = "invoke-subagent-manager-and-report"
+  role = aws_iam_role.orchestrator.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -145,4 +147,34 @@ resource "aws_iam_role_policy" "stress_test" {
       }
     ]
   })
+}
+
+resource "aws_iam_role" "image_builder" {
+  name = "${var.project_name}-image-builder"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_instance_profile" "image_builder" {
+  name = "${var.project_name}-image-builder"
+  role = aws_iam_role.image_builder.name
+}
+
+resource "aws_iam_role_policy_attachment" "image_builder" {
+  role       = aws_iam_role.image_builder.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder"
+}
+
+resource "aws_iam_role_policy_attachment" "image_builder_ssm" {
+  role       = aws_iam_role.image_builder.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }

@@ -27,7 +27,7 @@ resource "aws_lambda_function" "subagent_manager" {
       AUDIT_BUCKET_NAME              = aws_s3_bucket.audit.id
       MAX_ACTIVE_SUBAGENTS           = tostring(var.max_active_subagents)
       STATE_TABLE_NAME               = aws_dynamodb_table.state.name
-      SUBAGENT_AMI_ID                = data.aws_ssm_parameter.amazon_linux_2023.value
+      SUBAGENT_AMI_ID                = local.subagent_ami_id
       SUBAGENT_INSTANCE_PROFILE_NAME = aws_iam_instance_profile.subagent.name
       SUBAGENT_INSTANCE_TYPE         = var.subagent_instance_type
       SUBAGENT_SECURITY_GROUP_ID     = aws_security_group.instances.id

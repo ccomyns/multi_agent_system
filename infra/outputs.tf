@@ -13,9 +13,34 @@ output "state_table_name" {
   value       = aws_dynamodb_table.state.name
 }
 
-output "stress_test_instance_id" {
-  description = "One-shot stress-test caller instance, when enabled."
-  value       = try(aws_instance.stress_test[0].id, null)
+output "orchestrator_ami_id" {
+  description = "Prebaked AMI for on-demand orchestrators."
+  value       = local.orchestrator_ami_id
+}
+
+output "subagent_ami_id" {
+  description = "Prebaked browser-enabled AMI used by the subagent manager Lambda."
+  value       = local.subagent_ami_id
+}
+
+output "orchestrator_launch_template_id" {
+  description = "Launch template for a normal on-demand orchestrator run."
+  value       = aws_launch_template.orchestrator.id
+}
+
+output "orchestrator_launch_template_version" {
+  description = "Default version of the normal orchestrator launch template."
+  value       = aws_launch_template.orchestrator.default_version
+}
+
+output "orchestrator_stress_test_launch_template_id" {
+  description = "Launch template for an on-demand, self-terminating nine-call stress test."
+  value       = aws_launch_template.orchestrator_stress_test.id
+}
+
+output "orchestrator_stress_test_launch_template_version" {
+  description = "Default version of the stress-test orchestrator launch template."
+  value       = aws_launch_template.orchestrator_stress_test.default_version
 }
 
 output "stress_test_results_prefix" {

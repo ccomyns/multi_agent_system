@@ -3,12 +3,15 @@
 An early-stage system for coordinating EC2-based financial research agents. The
 current implementation contains:
 
+- Prebaked Ubuntu 24.04 AMIs for orchestrators and browser-enabled subagents.
+- On-demand `t3.large` orchestrator launch templates; Terraform does not create
+  a persistent orchestrator instance.
 - A Lambda function that launches subagent EC2 instances.
 - A hard limit of eight active subagents per orchestrator.
 - DynamoDB transactions for concurrency state.
 - S3 lifecycle audit records.
 - EventBridge reconciliation when subagent instances terminate.
-- An opt-in EC2 stress-test caller.
+- An on-demand, self-terminating orchestrator stress-test launch template.
 - A Next.js operations console.
 
 No infrastructure is created by cloning or building this repository.
@@ -21,20 +24,28 @@ calls EC2. DynamoDB, rather than Lambda memory, enforces the concurrency limit
 across concurrent Lambda containers.
 
 ```text
-Orchestrator
-    |
-    v
-Lambda subagent manager -----> EC2 subagent
-    |                              |
-    +----> DynamoDB state          +----> self-terminate after TTL
-    |
-    +----> S3 audit records
+Admin backend --launch template--> EC2 orchestrator (one per run)
+                                      |
+                                      v
+                             Lambda subagent manager -----> EC2 subagents
+                                      |                         |
+                                      +----> DynamoDB state     +----> terminate after 30 minutes
+                                      |
+                                      +----> S3 audit records
 
-EC2 terminated event -----> EventBridge -----> Lambda reconciliation
+Subagent terminated event -----> EventBridge -----> Lambda reconciliation
 ```
 
 S3 is an append-only audit destination. DynamoDB is the operational source of
-truth for active counts and agent state.
+truth for active counts and agent state. Each subagent item includes its
+orchestrator ID, agent ID, AMI ID, instance type, TTL, state, EC2 instance ID,
+and lifecycle timestamps.
+
+Terraform builds the launch templates and AMIs but launches no runtime
+orchestrator or subagent. EC2 Image Builder temporarily launches build/test
+instances while creating each AMI and terminates those workers after the build.
+The admin backend will eventually launch one orchestrator from the normal
+launch template for each run and terminate it when the run is complete.
 
 ## Repository
 
@@ -56,7 +67,9 @@ The console models exactly one active multi-agent run. It shows:
 - Searchable and filterable subagent assignments, instances, and activity.
 
 The UI currently uses typed mock data. It deliberately has no AWS credentials
-or direct browser-to-AWS integration.
+or direct browser-to-AWS integration. Terraform exposes the orchestrator
+launch-template IDs for a future authenticated backend; browser code should not
+receive AWS credentials or call `RunInstances` directly.
 
 Use a supported Node.js LTS release. Node 24 is specified in `admin/.nvmrc`.
 
@@ -118,17 +131,53 @@ terraform apply tfplan
 Do not run `apply` until the plan, AWS account, region, permissions, and
 estimated cost have been reviewed.
 
-The stress caller is disabled by default:
+Applying this configuration builds two AMIs:
+
+- Orchestrator: Codex CLI, DuckDB CLI, and the Python stress-test harness.
+- Subagent: Codex CLI, DuckDB CLI, Playwright, and Playwright's Chromium build.
+
+Both runtime roles default to `t3.large`. Subagents self-terminate after 1,800
+seconds (30 minutes). The AMIs use Ubuntu 24.04 because it is an operating
+system supported by Playwright.
+
+The install components request current software releases at image-build time.
+An existing AMI does not update itself. To rebuild both AMIs with current
+releases, increment the semantic image version and apply again:
 
 ```hcl
-create_stress_test_instance = false
+agent_image_version = "1.0.1"
 ```
 
-Enabling it creates one caller EC2 instance. The caller invokes Lambda nine
-times; a successful test briefly launches eight additional subagent instances
-and verifies that the ninth request receives a `429` response. The caller
-terminates itself after reporting, and subagents terminate after their
-configured TTL.
+The AMI build creates temporary EC2 instances and persistent EBS-backed AMIs,
+so it takes longer and costs more than a configuration-only Terraform apply.
+Codex is installed but deliberately unauthenticated; API keys or sign-in tokens
+must be supplied securely at runtime and must never be baked into an AMI.
+
+## Stress Test
+
+Terraform provides a launch template instead of creating a test instance during
+`terraform apply`. Obtain the template ID and version after applying:
+
+```bash
+terraform output orchestrator_stress_test_launch_template_id
+terraform output orchestrator_stress_test_launch_template_version
+```
+
+The admin backend can pass those values to EC2 `RunInstances`. An instance
+launched from this template:
+
+- Starts one `t3.large` orchestrator.
+- Generates a stable orchestrator ID from its EC2 instance ID.
+- Runs `run-subagent-stress-test`, which invokes Lambda nine times.
+- Expects eight subagents and one `429` capacity rejection.
+- Writes the JSON report under the S3 stress-test prefix.
+- Shuts itself down; the launch template converts shutdown into EC2
+  termination.
+
+The eight accepted Lambda calls create `t3.large` subagents from the prebaked
+browser AMI. DynamoDB atomically records the counter and per-agent metadata
+before EC2 is called, then updates the item with the instance ID and launch
+state. EventBridge updates the records when the subagents terminate.
 
 ## Data Safety
 
