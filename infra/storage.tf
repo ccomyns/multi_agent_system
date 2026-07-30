@@ -1,6 +1,6 @@
 resource "aws_s3_bucket" "audit" {
   bucket        = "${var.project_name}-audit-${data.aws_caller_identity.current.account_id}-${random_id.suffix.hex}"
-  force_destroy = var.audit_bucket_force_destroy
+  force_destroy = false
 }
 
 resource "aws_s3_bucket_public_access_block" "audit" {

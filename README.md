@@ -187,5 +187,5 @@ credentials, keys, or local AWS configuration. These are excluded by
 should eventually use a secured remote backend with locking.
 
 The S3 audit bucket uses encryption, versioning, and public-access blocking.
-Terraform will not delete a non-empty audit bucket unless
-`audit_bucket_force_destroy` is explicitly enabled.
+Terraform will not delete a non-empty audit bucket, because `force_destroy` is
+hardcoded to `false` on the bucket.

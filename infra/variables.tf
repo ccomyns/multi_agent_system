@@ -82,9 +82,3 @@ variable "subagent_root_volume_size_gb" {
     error_message = "subagent_root_volume_size_gb must be at least 20."
   }
 }
-
-variable "audit_bucket_force_destroy" {
-  description = "Allow terraform destroy to delete the audit bucket even when it contains records."
-  type        = bool
-  default     = false
-}
