@@ -36,7 +36,7 @@ variable "orchestrator_instance_type" {
 variable "subagent_ttl_seconds" {
   description = "Seconds before a subagent shuts down and terminates itself."
   type        = number
-  default     = 1800
+  default     = 180
 
   validation {
     condition     = var.subagent_ttl_seconds >= 180 && var.subagent_ttl_seconds <= 86400

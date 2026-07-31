@@ -316,7 +316,6 @@ resource "aws_imagebuilder_infrastructure_configuration" "agents" {
   }
 
   resource_tags = {
-    Name = "${var.project_name}-image-build"
     Role = "ephemeral-image-builder"
   }
 
