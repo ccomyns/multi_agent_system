@@ -82,6 +82,17 @@ npm run dev
 
 Open `http://localhost:3000`.
 
+To run the real concurrency stress test from the Testing page, copy
+`admin/.env.example` to `admin/.env.local`, set the deployed stress-test launch
+template ID/version, audit bucket, and AWS region, then change
+`STRESS_TESTS_ENABLED` to `true`. The Next.js server uses the standard AWS SDK
+credential chain, so no AWS credentials are sent to the browser. Its AWS
+identity needs permission to run and tag instances from the launch template,
+pass the template's instance role, describe the launched instance, and read
+and list `stress-tests/*` in the audit bucket. Keep this operations console
+behind authentication in any shared or deployed environment because a test
+launches billable EC2 instances.
+
 Frontend validation:
 
 ```bash
@@ -167,9 +178,9 @@ The admin backend can pass those values to EC2 `RunInstances`. An instance
 launched from this template:
 
 - Starts one `t3.large` orchestrator.
-- Generates a stable orchestrator ID from its EC2 instance ID.
-- Runs `run-subagent-stress-test`, which invokes Lambda nine times.
-- Expects eight subagents and one `429` capacity rejection.
+- Receives the test parameters and a stable orchestrator ID through instance tags.
+- Runs `run-subagent-stress-test` with those parameters.
+- Defaults in the admin UI to eight subagents and one `429` capacity rejection.
 - Writes the JSON report under the S3 stress-test prefix.
 - Shuts itself down; the launch template converts shutdown into EC2
   termination.

@@ -33,7 +33,7 @@ export function RunDashboard({ run }: { run: ActiveRun }) {
 
   return (
     <div className="app-shell">
-      <TopBar />
+      <TopBar title="Multi Agent Run" />
 
       <main id="multi-agent-run" className="main-content">
         <header className="page-header">

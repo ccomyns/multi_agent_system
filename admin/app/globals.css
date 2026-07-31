@@ -472,6 +472,32 @@ h1 {
   margin-top: 20px;
 }
 
+.stress-warning,
+.stress-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 20px;
+  padding: 11px 13px;
+  color: var(--amber);
+  background: var(--amber-soft);
+  border: 1px solid #f0dda9;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.stress-warning svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.stress-error {
+  color: var(--red);
+  background: var(--red-soft);
+  border-color: #f1cccc;
+}
+
 .stress-footer > span {
   color: #8998aa;
   font-size: 11px;
@@ -480,6 +506,28 @@ h1 {
 .stress-results {
   margin-top: 24px;
   padding-top: 22px;
+  border-top: 1px solid var(--border);
+}
+
+.stress-run-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.stress-run-meta strong {
+  color: var(--text-strong);
+  font-weight: 650;
+}
+
+.stress-run-pending {
+  margin-top: 20px;
+  margin-bottom: 0;
+  padding-top: 18px;
   border-top: 1px solid var(--border);
 }
 

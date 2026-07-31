@@ -34,7 +34,7 @@ output "orchestrator_launch_template_version" {
 }
 
 output "orchestrator_stress_test_launch_template_id" {
-  description = "Launch template for an on-demand, self-terminating nine-call stress test."
+  description = "Launch template for an on-demand, self-terminating concurrency stress test."
   value       = aws_launch_template.orchestrator_stress_test.id
 }
 

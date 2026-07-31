@@ -1,54 +1,128 @@
 "use client";
 
-import { FlaskConical, Play } from "lucide-react";
+import { AlertTriangle, FlaskConical, Play } from "lucide-react";
 import { useState } from "react";
 
-type CallResult = {
-  call: number;
-  status: number;
-};
+import type {
+  StressTestError,
+  StressTestLaunch,
+  StressTestReport,
+} from "@/lib/stress-test";
 
-type StressReport = {
-  invocations: number;
-  expectedLimit: number;
-  accepted: number;
-  rejected: number;
-  passed: boolean;
-  calls: CallResult[];
-};
+function isErrorResponse(value: unknown): value is StressTestError {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "error" in value &&
+    typeof value.error === "string"
+  );
+}
 
-function buildMockReport(invocations: number, expectedLimit: number): StressReport {
-  const accepted = Math.min(invocations, expectedLimit);
-  const rejected = Math.max(0, invocations - expectedLimit);
-  const calls = Array.from({ length: invocations }, (_, index) => ({
-    call: index + 1,
-    status: index < expectedLimit ? 201 : 429,
-  }));
-  return {
-    invocations,
-    expectedLimit,
-    accepted,
-    rejected,
-    passed: accepted === expectedLimit && rejected === invocations - expectedLimit,
-    calls,
-  };
+function isLaunchResponse(value: unknown): value is StressTestLaunch {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "orchestratorId" in value &&
+    typeof value.orchestratorId === "string" &&
+    "instanceId" in value &&
+    typeof value.instanceId === "string" &&
+    "startedAt" in value &&
+    typeof value.startedAt === "string"
+  );
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 export function TestingPanel() {
   const [invocations, setInvocations] = useState(9);
   const [expectedLimit, setExpectedLimit] = useState(8);
   const [orchestratorId, setOrchestratorId] = useState("");
-  const [status, setStatus] = useState<"idle" | "running" | "done">("idle");
-  const [report, setReport] = useState<StressReport | null>(null);
+  const [status, setStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [report, setReport] = useState<StressTestReport | null>(null);
+  const [launch, setLaunch] = useState<StressTestLaunch | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  function runStressTest() {
+  async function runStressTest() {
     setStatus("running");
     setReport(null);
-    window.setTimeout(() => {
-      setReport(buildMockReport(invocations, expectedLimit));
-      setStatus("done");
-    }, 700);
+    setLaunch(null);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/stress-tests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invocations, expectedLimit, orchestratorId }),
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          isErrorResponse(payload) ? payload.error : `Stress test failed (${response.status}).`,
+        );
+      }
+
+      if (!isLaunchResponse(payload)) {
+        throw new Error("The admin server returned an unexpected launch response.");
+      }
+
+      setLaunch(payload);
+
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        await wait(3000);
+        const query = new URLSearchParams({
+          orchestratorId: payload.orchestratorId,
+          instanceId: payload.instanceId,
+        });
+        const statusResponse = await fetch(`/api/stress-tests?${query}`, {
+          cache: "no-store",
+        });
+        const statusPayload: unknown = await statusResponse.json();
+        if (!statusResponse.ok) {
+          throw new Error(
+            isErrorResponse(statusPayload)
+              ? statusPayload.error
+              : `Could not read stress-test status (${statusResponse.status}).`,
+          );
+        }
+        if (
+          typeof statusPayload === "object" &&
+          statusPayload !== null &&
+          "status" in statusPayload &&
+          statusPayload.status === "failed" &&
+          "error" in statusPayload &&
+          typeof statusPayload.error === "string"
+        ) {
+          throw new Error(statusPayload.error);
+        }
+        if (
+          typeof statusPayload === "object" &&
+          statusPayload !== null &&
+          "status" in statusPayload &&
+          statusPayload.status === "complete" &&
+          "report" in statusPayload
+        ) {
+          setReport(statusPayload.report as StressTestReport);
+          setStatus("done");
+          return;
+        }
+      }
+
+      throw new Error("The stress test did not finish within 10 minutes.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The stress test could not be completed.");
+      setStatus("error");
+    }
   }
+
+  const parametersAreValid =
+    Number.isInteger(invocations) &&
+    invocations >= 2 &&
+    invocations <= 100 &&
+    Number.isInteger(expectedLimit) &&
+    expectedLimit >= 1 &&
+    expectedLimit < invocations;
 
   return (
     <div className="launch-card stress-card">
@@ -59,8 +133,8 @@ export function TestingPanel() {
         <div>
           <h2>Subagent concurrency stress test</h2>
           <p>
-            Fire repeated spawn requests at the subagent-manager Lambda and confirm the
-            concurrency boundary holds. This is a static preview — not yet wired to AWS.
+            Launch a self-terminating orchestrator that fires repeated spawn requests at
+            the subagent-manager Lambda and confirms the concurrency boundary holds.
           </p>
         </div>
       </div>
@@ -102,25 +176,60 @@ export function TestingPanel() {
         </div>
       </div>
 
+      <div className="stress-warning" role="note">
+        <AlertTriangle size={16} strokeWidth={1.9} aria-hidden="true" />
+        <span>
+          This launches up to {expectedLimit || 0} real subagent EC2 instances and may incur
+          AWS charges. Instances use the configured self-termination policy.
+        </span>
+      </div>
+
       <div className="stress-footer">
         <span>
           {status === "running"
-            ? "Running…"
-            : "Sends spawn requests sequentially, then checks accepted vs. rejected (429)."}
+            ? launch
+              ? `Running on ${launch.instanceId}. Waiting for its S3 report…`
+              : "Launching the stress-test orchestrator…"
+            : parametersAreValid
+              ? "Checks accepted responses against the first expected 429 rejection."
+              : "Invocations must be 2–100 and greater than the expected limit."}
         </span>
         <button
           type="button"
           className="primary-button"
           onClick={runStressTest}
-          disabled={status === "running"}
+          disabled={status === "running" || !parametersAreValid}
         >
           <Play size={15} strokeWidth={2} />
           {status === "running" ? "Running…" : "Run stress test"}
         </button>
       </div>
 
+      {error ? (
+        <div className="stress-error" role="alert">
+          {error}
+        </div>
+      ) : null}
+
+      {launch && !report ? (
+        <div className="stress-run-meta stress-run-pending" role="status">
+          <span>
+            Orchestrator <strong className="mono">{launch.orchestratorId}</strong>
+          </span>
+          <span>
+            Instance <strong className="mono">{launch.instanceId}</strong>
+          </span>
+        </div>
+      ) : null}
+
       {report ? (
         <div className="stress-results">
+          <div className="stress-run-meta">
+            <span>
+              Orchestrator <strong className="mono">{report.orchestratorId}</strong>
+            </span>
+            <span>{new Date(report.runAt).toLocaleString()}</span>
+          </div>
           <div className="stress-metrics">
             <span className={report.passed ? "stress-pill is-pass" : "stress-pill is-fail"}>
               {report.passed ? "PASS" : "FAIL"}
@@ -141,7 +250,10 @@ export function TestingPanel() {
 
           <pre className="stress-log">
             {report.calls
-              .map((call) => `call=${call.call} status=${call.status}`)
+              .map(
+                (call) =>
+                  `call=${call.call} status=${call.status} body=${JSON.stringify(call.body)}`,
+              )
               .join("\n")}
           </pre>
         </div>
