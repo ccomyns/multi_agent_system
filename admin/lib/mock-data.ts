@@ -1,4 +1,8 @@
-import type { ActiveRun } from "@/lib/types";
+import type {
+  ActiveRun,
+  MonitorSubagentStep,
+  MonitorTab,
+} from "@/lib/types";
 
 export const activeRun: ActiveRun = {
   id: "run_01J4Z2M8H7K3",
@@ -118,3 +122,52 @@ export const activeRun: ActiveRun = {
     },
   ],
 };
+
+export const monitorTabs: MonitorTab[] = [
+  { id: "mon", label: "Agent monitoring" },
+  { id: "data", label: "Data review" },
+  { id: "infra", label: "Infra review" },
+];
+
+export const monitorSubagents: MonitorSubagentStep[] = [
+  {
+    id: "subagent-1",
+    name: "Subagent 1",
+    description: "Pulls raw source records into local DuckDB",
+  },
+  {
+    id: "subagent-2",
+    name: "Subagent 2",
+    description: "Infers schema and normalizes column types",
+  },
+  {
+    id: "subagent-3",
+    name: "Subagent 3",
+    description: "Deduplicates rows against prior snapshots",
+  },
+  {
+    id: "subagent-4",
+    name: "Subagent 4",
+    description: "Runs validation checks and flags anomalies",
+  },
+  {
+    id: "subagent-5",
+    name: "Subagent 5",
+    description: "Enriches tables with reference lookups",
+  },
+  {
+    id: "subagent-6",
+    name: "Subagent 6",
+    description: "Persists completed tables to S3",
+  },
+  {
+    id: "subagent-7",
+    name: "Subagent 7",
+    description: "Evaluates merge candidates against existing tables",
+  },
+  {
+    id: "subagent-8",
+    name: "Subagent 8",
+    description: "Promotes approved tables into RDS",
+  },
+];

@@ -1,9 +1,10 @@
 "use client";
 
-import { ArrowRight, Beaker, Bot, Layers3, Sparkles } from "lucide-react";
+import { ArrowRight, Beaker, Bot, Sparkles } from "lucide-react";
 import { useState } from "react";
 
 import { StatusBadge } from "@/components/status-badge";
+import { TopBar } from "@/components/top-bar";
 import type { ActiveRun } from "@/lib/types";
 
 export function RunDashboard({ run }: { run: ActiveRun }) {
@@ -32,22 +33,7 @@ export function RunDashboard({ run }: { run: ActiveRun }) {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="#multi-agent-run" aria-label="Research Control home">
-          <span className="brand-mark" aria-hidden="true">
-            <Layers3 size={19} strokeWidth={1.8} />
-          </span>
-          <span className="brand-copy">
-            <strong>Research Control</strong>
-            <span>Admin console</span>
-          </span>
-        </a>
-
-        <div className="environment">
-          <span className="environment-dot" aria-hidden="true" />
-          Development
-        </div>
-      </header>
+      <TopBar />
 
       <main id="multi-agent-run" className="main-content">
         <header className="page-header">

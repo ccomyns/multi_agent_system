@@ -1,6 +1,19 @@
-import { RunDashboard } from "@/components/run-dashboard";
-import { activeRun } from "@/lib/mock-data";
+import { AgentMonitor } from "@/components/agent-monitor";
+import { Sidebar } from "@/components/sidebar";
+import { TopBar } from "@/components/top-bar";
 
 export default function Page() {
-  return <RunDashboard run={activeRun} />;
+  return (
+    <div className="app-shell app-layout">
+      <Sidebar />
+
+      <div className="app-body monitor-shell">
+        <TopBar title="Multi Agent System" />
+
+        <main className="monitor-main">
+          <AgentMonitor />
+        </main>
+      </div>
+    </div>
+  );
 }
