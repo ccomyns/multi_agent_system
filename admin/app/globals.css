@@ -919,20 +919,65 @@ h1 {
   font-size: 11px;
 }
 
-.job-thread-meta > div {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--amber);
-  font-weight: 700;
+.job-error {
+  margin: 18px 0;
+  padding: 12px 14px;
+  color: var(--red);
+  background: var(--red-soft);
+  border: 1px solid #f1cccc;
+  border-radius: 11px;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
-.job-status-dot {
-  width: 7px;
-  height: 7px;
-  background: #c68c17;
-  border-radius: 50%;
-  box-shadow: 0 0 0 3px rgb(198 140 23 / 13%);
+.job-record-facts,
+.saved-job-card-facts {
+  display: grid;
+  gap: 6px;
+  margin: 14px 0 0;
+}
+
+.job-record-facts > div,
+.saved-job-card-facts > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.job-record-facts dt,
+.saved-job-card-facts dt {
+  flex: 0 0 88px;
+  color: #8b99aa;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.job-record-facts dd,
+.saved-job-card-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.job-end-button {
+  margin-top: 18px;
+}
+
+.saved-job-card-facts {
+  margin-top: 12px;
+}
+
+.saved-job-failure {
+  margin-top: 12px;
+  padding: 9px 11px;
+  color: var(--red);
+  background: var(--red-soft);
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .job-user-message {

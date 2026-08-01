@@ -1,105 +1,112 @@
-import { useMemo, useSyncExternalStore } from "react";
-
 export type JobStatus = "initializing" | "running" | "completed" | "failed";
 
 export type Job = {
   jobId: string;
-  originalQuery: string;
+  originalTask: string;
   status: JobStatus;
   createdAt: string;
+  updatedAt: string;
+  orchestratorId: string | null;
+  orchestratorInstanceId: string | null;
+  launchedAt: string | null;
+  finishedAt: string | null;
+  failureReason: string | null;
+  resultS3Prefix: string;
 };
 
-const JOBS_STORAGE_KEY = "research-control.jobs";
-const JOBS_CHANGED_EVENT = "research-control.jobs-changed";
+export type JobsSnapshot = {
+  jobs: Job[];
+  activeJobId: string | null;
+};
 
-function isJob(value: unknown): value is Job {
+// Shared by the browser (which mints the ID) and the admin server (which validates
+// it before using it as both a DynamoDB key and an EC2 client token).
+export const JOB_ID_PATTERN = /^job_[a-z0-9]{4,12}_[0-9a-f]{8}$/;
+
+const ACTIVE_STATUSES: JobStatus[] = ["initializing", "running"];
+
+export function createJobId() {
+  const stamp = Date.now().toString(36);
+  const random = crypto.randomUUID().replaceAll("-", "").slice(0, 8);
+  return `job_${stamp}_${random}`;
+}
+
+export function isActiveJob(job: Job) {
+  return ACTIVE_STATUSES.includes(job.status);
+}
+
+export function isJob(value: unknown): value is Job {
   return (
     typeof value === "object" &&
     value !== null &&
     "jobId" in value &&
     typeof value.jobId === "string" &&
-    "originalQuery" in value &&
-    typeof value.originalQuery === "string" &&
+    "originalTask" in value &&
+    typeof value.originalTask === "string" &&
     "status" in value &&
-    ["initializing", "running", "completed", "failed"].includes(
-      String(value.status),
-    ) &&
+    ["initializing", "running", "completed", "failed"].includes(String(value.status)) &&
     "createdAt" in value &&
     typeof value.createdAt === "string"
   );
 }
 
-function parsePreviewJobs(snapshot: string | null): Job[] {
-  if (snapshot === null) {
-    return [];
-  }
-
-  try {
-    const stored: unknown = JSON.parse(snapshot);
-    return Array.isArray(stored) ? stored.filter(isJob) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function readPreviewJobs(): Job[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
-
-  return parsePreviewJobs(window.localStorage.getItem(JOBS_STORAGE_KEY) ?? "[]");
-}
-
-function subscribeToPreviewJobs(onStoreChange: () => void) {
-  window.addEventListener("storage", onStoreChange);
-  window.addEventListener(JOBS_CHANGED_EVENT, onStoreChange);
-
-  return () => {
-    window.removeEventListener("storage", onStoreChange);
-    window.removeEventListener(JOBS_CHANGED_EVENT, onStoreChange);
-  };
-}
-
-function getPreviewJobsSnapshot() {
-  return window.localStorage.getItem(JOBS_STORAGE_KEY) ?? "[]";
-}
-
-function getServerPreviewJobsSnapshot() {
-  return null;
-}
-
-export function usePreviewJobs() {
-  const snapshot = useSyncExternalStore(
-    subscribeToPreviewJobs,
-    getPreviewJobsSnapshot,
-    getServerPreviewJobsSnapshot,
+function isSnapshot(value: unknown): value is JobsSnapshot {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "jobs" in value &&
+    Array.isArray(value.jobs) &&
+    value.jobs.every(isJob)
   );
-
-  return {
-    jobs: useMemo(() => parsePreviewJobs(snapshot), [snapshot]),
-    hydrated: snapshot !== null,
-  };
 }
 
-export function findActivePreviewJob(jobs = readPreviewJobs()) {
-  return jobs.find((job) => job.status === "initializing" || job.status === "running") ?? null;
-}
-
-export function createPreviewJob(originalQuery: string): Job {
-  const jobs = readPreviewJobs();
-  const activeJob = findActivePreviewJob(jobs);
-  if (activeJob) {
-    return activeJob;
+function readError(payload: unknown, fallback: string) {
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "error" in payload &&
+    typeof payload.error === "string"
+  ) {
+    return payload.error;
   }
+  return fallback;
+}
 
-  const job: Job = {
-    jobId: `job_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`,
-    originalQuery,
-    status: "initializing",
-    createdAt: new Date().toISOString(),
-  };
+async function requestJobs(input: string, init?: RequestInit): Promise<unknown> {
+  const response = await fetch(input, { cache: "no-store", ...init });
+  const payload: unknown = await response.json();
+  if (!response.ok) {
+    throw new Error(readError(payload, `The request failed (${response.status}).`));
+  }
+  return payload;
+}
 
-  window.localStorage.setItem(JOBS_STORAGE_KEY, JSON.stringify([job, ...jobs]));
-  window.dispatchEvent(new Event(JOBS_CHANGED_EVENT));
-  return job;
+export async function fetchJobs(): Promise<JobsSnapshot> {
+  const payload = await requestJobs("/api/jobs");
+  if (!isSnapshot(payload)) {
+    throw new Error("The admin server returned an unexpected job list.");
+  }
+  return payload;
+}
+
+export async function requestJobLaunch(originalTask: string): Promise<Job> {
+  const payload = await requestJobs("/api/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jobId: createJobId(), originalTask }),
+  });
+  if (!isJob(payload)) {
+    throw new Error("The admin server returned an unexpected job record.");
+  }
+  return payload;
+}
+
+export async function requestJobEnd(jobId: string): Promise<Job> {
+  const payload = await requestJobs(`/api/jobs?jobId=${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+  });
+  if (!isJob(payload)) {
+    throw new Error("The admin server returned an unexpected job record.");
+  }
+  return payload;
 }

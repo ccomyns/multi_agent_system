@@ -1,24 +1,25 @@
 "use client";
 
-import { ArrowUp, Bot, Database, Sparkles } from "lucide-react";
+import { ArrowUp, Bot, Database, Sparkles, Square } from "lucide-react";
 import { useRef, useState } from "react";
 
-import { createPreviewJob, findActivePreviewJob, usePreviewJobs } from "@/lib/jobs";
+import { StatusBadge } from "@/components/status-badge";
+import { useJobs } from "@/lib/use-jobs";
 
 export function JobComposer() {
   const [query, setQuery] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { jobs, hydrated } = usePreviewJobs();
-  const job = findActivePreviewJob(jobs);
+  const { activeJob: job, hydrated, pending, error, launch, end } = useJobs();
 
-  function submitJob() {
-    const originalQuery = query.trim();
-    if (!originalQuery || job) {
+  async function submitJob() {
+    const originalTask = query.trim();
+    if (!originalTask || job || pending) {
       return;
     }
 
-    createPreviewJob(originalQuery);
-    setQuery("");
+    if (await launch(originalTask)) {
+      setQuery("");
+    }
   }
 
   return (
@@ -34,15 +35,12 @@ export function JobComposer() {
       ) : (
         <div className="job-thread" aria-live="polite">
           <div className="job-thread-meta">
-            <div>
-              <span className="job-status-dot" aria-hidden="true" />
-              <span>Initializing</span>
-            </div>
+            <StatusBadge status={job.status} />
             <span className="mono">{job.jobId}</span>
           </div>
 
           <article className="job-user-message" aria-label="Original job request">
-            <p>{job.originalQuery}</p>
+            <p>{job.originalTask}</p>
           </article>
 
           <div className="job-system-message">
@@ -50,21 +48,55 @@ export function JobComposer() {
               <Bot size={17} strokeWidth={1.8} />
             </span>
             <div>
-              <strong>Job request recorded</strong>
+              <strong>
+                {job.orchestratorId ? "Orchestrator launched" : "Waiting on the orchestrator"}
+              </strong>
               <p>
-                This is a static preview. Orchestrator launch and database persistence
-                will be connected in the next phase.
+                {job.orchestratorId
+                  ? "The orchestrator is booting and will report subagent activity under this orchestrator ID."
+                  : "The job record holds the lock. Its orchestrator ID is still null."}
               </p>
+
+              <dl className="job-record-facts">
+                <div>
+                  <dt>Orchestrator</dt>
+                  <dd className="mono">{job.orchestratorId ?? "null"}</dd>
+                </div>
+                <div>
+                  <dt>Instance</dt>
+                  <dd className="mono">{job.orchestratorInstanceId ?? "null"}</dd>
+                </div>
+                <div>
+                  <dt>Results</dt>
+                  <dd className="mono">{job.resultS3Prefix}</dd>
+                </div>
+              </dl>
+
+              <button
+                type="button"
+                className="secondary-button job-end-button"
+                onClick={() => void end(job.jobId)}
+                disabled={pending}
+              >
+                <Square size={13} strokeWidth={2.2} aria-hidden="true" />
+                {pending ? "Ending…" : "End job and release the lock"}
+              </button>
             </div>
           </div>
         </div>
       )}
 
+      {error ? (
+        <div className="job-error" role="alert">
+          {error}
+        </div>
+      ) : null}
+
       <form
         className="job-prompt-form"
         onSubmit={(event) => {
           event.preventDefault();
-          submitJob();
+          void submitJob();
         }}
       >
         <label className="sr-only" htmlFor="job-prompt">
@@ -79,15 +111,15 @@ export function JobComposer() {
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              submitJob();
+              void submitJob();
             }
           }}
           placeholder={
             job
-              ? "This job is active. Additional messages are not enabled yet."
+              ? "This job is active. Only one job can run at a time."
               : "Describe the research job you want to run…"
           }
-          disabled={!hydrated || Boolean(job)}
+          disabled={!hydrated || Boolean(job) || pending}
           maxLength={4000}
           rows={3}
         />
@@ -95,8 +127,10 @@ export function JobComposer() {
           <span>
             {job ? (
               <>
-                <Database size={13} aria-hidden="true" /> Browser preview record
+                <Database size={13} aria-hidden="true" /> Job record holds the active-job lock
               </>
+            ) : pending ? (
+              "Claiming the lock and launching the orchestrator…"
             ) : (
               "Shift + Enter for a new line"
             )}
@@ -105,7 +139,7 @@ export function JobComposer() {
             type="submit"
             className="job-send-button"
             aria-label="Create job"
-            disabled={!hydrated || Boolean(job) || !query.trim()}
+            disabled={!hydrated || Boolean(job) || pending || !query.trim()}
           >
             <ArrowUp size={18} strokeWidth={2.2} aria-hidden="true" />
           </button>

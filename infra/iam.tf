@@ -144,6 +144,12 @@ resource "aws_iam_role_policy" "orchestrator" {
         Effect   = "Allow"
         Action   = "s3:PutObject"
         Resource = "${aws_s3_bucket.audit.arn}/stress-tests/*"
+      },
+      {
+        Sid      = "WriteJobResults"
+        Effect   = "Allow"
+        Action   = "s3:PutObject"
+        Resource = "${aws_s3_bucket.audit.arn}/jobs/*"
       }
     ]
   })
@@ -177,4 +183,112 @@ resource "aws_iam_role_policy_attachment" "image_builder" {
 resource "aws_iam_role_policy_attachment" "image_builder_ssm" {
   role       = aws_iam_role.image_builder.name
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+// Long-lived identity behind the admin server. Its credentials never reach the
+// browser: the Next.js server holds them and is the only caller that can claim
+// the job lock and launch an orchestrator.
+resource "aws_iam_user" "admin_server" {
+  name = "${var.project_name}-admin-server"
+}
+
+resource "aws_iam_user_policy" "admin_server" {
+  name = "launch-and-track-jobs"
+  user = aws_iam_user.admin_server.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "JobsTable"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:ConditionCheckItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:Scan",
+          "dynamodb:TransactWriteItems",
+          "dynamodb:UpdateItem"
+        ]
+        Resource = aws_dynamodb_table.jobs.arn
+      },
+      {
+        Sid    = "ReadSubagentState"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:Query"
+        ]
+        Resource = [
+          aws_dynamodb_table.state.arn,
+          "${aws_dynamodb_table.state.arn}/index/instance-index"
+        ]
+      },
+      {
+        Sid    = "LaunchOrchestrators"
+        Effect = "Allow"
+        Action = [
+          "ec2:CreateTags",
+          "ec2:RunInstances"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "DescribeOrchestrators"
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeInstances",
+          "ec2:DescribeLaunchTemplates",
+          "ec2:DescribeLaunchTemplateVersions"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid      = "StopOrchestrators"
+        Effect   = "Allow"
+        Action   = "ec2:TerminateInstances"
+        Resource = "*"
+
+        Condition = {
+          StringEquals = {
+            "ec2:ResourceTag/Role" = "orchestrator"
+          }
+        }
+      },
+      {
+        Sid      = "PassOrchestratorRole"
+        Effect   = "Allow"
+        Action   = "iam:PassRole"
+        Resource = aws_iam_role.orchestrator.arn
+
+        Condition = {
+          StringEquals = {
+            "iam:PassedToService" = "ec2.amazonaws.com"
+          }
+        }
+      },
+      {
+        Sid      = "ListAuditBucket"
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = aws_s3_bucket.audit.arn
+
+        Condition = {
+          StringLike = {
+            "s3:prefix" = ["jobs/*", "stress-tests/*"]
+          }
+        }
+      },
+      {
+        Sid    = "ReadJobAndStressResults"
+        Effect = "Allow"
+        Action = "s3:GetObject"
+        Resource = [
+          "${aws_s3_bucket.audit.arn}/jobs/*",
+          "${aws_s3_bucket.audit.arn}/stress-tests/*"
+        ]
+      }
+    ]
+  })
 }

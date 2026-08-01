@@ -7,6 +7,7 @@ import { GetObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
+import { awsClientOptions } from "@/lib/aws";
 import type {
   StressTestCall,
   StressTestLaunch,
@@ -174,7 +175,7 @@ export async function POST(request: Request) {
     return errorResponse(error instanceof Error ? error.message : "Invalid request.", 400);
   }
 
-  const s3 = new S3Client({ region: config.region });
+  const s3 = new S3Client(awsClientOptions());
   try {
     await s3.send(
       new HeadObjectCommand({
@@ -198,7 +199,7 @@ export async function POST(request: Request) {
     s3.destroy();
   }
 
-  const ec2 = new EC2Client({ region: config.region });
+  const ec2 = new EC2Client(awsClientOptions());
   try {
     const response = await ec2.send(
       new RunInstancesCommand({
@@ -286,7 +287,7 @@ export async function GET(request: Request) {
     return errorResponse("A valid orchestratorId and instanceId are required.", 400);
   }
 
-  const s3 = new S3Client({ region: config.region });
+  const s3 = new S3Client(awsClientOptions());
   try {
     const response = await s3.send(
       new GetObjectCommand({
@@ -311,7 +312,7 @@ export async function GET(request: Request) {
     s3.destroy();
   }
 
-  const ec2 = new EC2Client({ region: config.region });
+  const ec2 = new EC2Client(awsClientOptions());
   try {
     const response = await ec2.send(
       new DescribeInstancesCommand({ InstanceIds: [instanceId] }),

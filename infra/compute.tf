@@ -12,11 +12,25 @@ locals {
       -H "X-aws-ec2-metadata-token: $token" \
       http://169.254.169.254/latest/meta-data/instance-id)"
 
+    # Set by the admin server on RunInstances; absent for stress-test launches.
+    if ! job_id="$(curl -fsS \
+      -H "X-aws-ec2-metadata-token: $token" \
+      http://169.254.169.254/latest/meta-data/tags/instance/JobId)"; then
+      job_id=""
+    fi
+
+    result_s3_prefix=""
+    if [ -n "$job_id" ]; then
+      result_s3_prefix="s3://${aws_s3_bucket.audit.id}/jobs/$job_id/result/"
+    fi
+
     cat > /etc/multi-agent/orchestrator.env <<ENV
     AWS_DEFAULT_REGION=${var.aws_region}
     AWS_REGION=${var.aws_region}
     FUNCTION_NAME=${aws_lambda_function.subagent_manager.function_name}
     AUDIT_BUCKET_NAME=${aws_s3_bucket.audit.id}
+    JOB_ID=$job_id
+    RESULT_S3_PREFIX=$result_s3_prefix
     ORCHESTRATOR_ID=orchestrator-$instance_id
     ENV
     chmod 0644 /etc/multi-agent/orchestrator.env
@@ -83,6 +97,7 @@ resource "aws_launch_template" "orchestrator" {
     http_protocol_ipv6          = "disabled"
     http_put_response_hop_limit = 1
     http_tokens                 = "required"
+    instance_metadata_tags      = "enabled"
   }
 
   block_device_mappings {

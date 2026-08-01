@@ -4,10 +4,10 @@ import { BriefcaseBusiness, Inbox } from "lucide-react";
 import Link from "next/link";
 
 import { StatusBadge } from "@/components/status-badge";
-import { usePreviewJobs } from "@/lib/jobs";
+import { useJobs } from "@/lib/use-jobs";
 
 export function SavedJobs() {
-  const { jobs, hydrated } = usePreviewJobs();
+  const { jobs, activeJob, hydrated, error } = useJobs();
 
   return (
     <div className="saved-jobs-content">
@@ -19,11 +19,15 @@ export function SavedJobs() {
         </div>
         <Link className="primary-button" href="/jobs/new">
           <BriefcaseBusiness size={15} aria-hidden="true" />
-          {jobs.some((job) => job.status === "initializing" || job.status === "running")
-            ? "View active job"
-            : "Create a job"}
+          {activeJob ? "View active job" : "Create a job"}
         </Link>
       </header>
+
+      {error ? (
+        <div className="job-error" role="alert">
+          {error}
+        </div>
+      ) : null}
 
       {hydrated && jobs.length === 0 ? (
         <div className="saved-jobs-empty">
@@ -43,7 +47,18 @@ export function SavedJobs() {
                 <span className="mono">{job.jobId}</span>
                 <StatusBadge status={job.status} />
               </div>
-              <p>{job.originalQuery}</p>
+              <p>{job.originalTask}</p>
+              <dl className="saved-job-card-facts">
+                <div>
+                  <dt>Orchestrator</dt>
+                  <dd className="mono">{job.orchestratorId ?? "null"}</dd>
+                </div>
+                <div>
+                  <dt>Results</dt>
+                  <dd className="mono">{job.resultS3Prefix}</dd>
+                </div>
+              </dl>
+              {job.failureReason ? <p className="saved-job-failure">{job.failureReason}</p> : null}
               <time dateTime={job.createdAt}>
                 Created {new Date(job.createdAt).toLocaleString()}
               </time>
@@ -53,8 +68,7 @@ export function SavedJobs() {
       ) : null}
 
       <p className="job-preview-note">
-        Static preview · these records currently use local browser storage, not a cloud
-        database.
+        Job records and the single active-job lock live in DynamoDB.
       </p>
     </div>
   );

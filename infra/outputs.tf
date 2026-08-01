@@ -13,6 +13,21 @@ output "state_table_name" {
   value       = aws_dynamodb_table.state.name
 }
 
+output "jobs_table_name" {
+  description = "DynamoDB table containing job records and the single active-job lock."
+  value       = aws_dynamodb_table.jobs.name
+}
+
+output "job_results_prefix" {
+  description = "S3 location under which each orchestrator writes its final output."
+  value       = "s3://${aws_s3_bucket.audit.id}/jobs/"
+}
+
+output "admin_server_iam_user_name" {
+  description = "IAM user the admin server authenticates as. Create access keys locally; do not store them in Terraform state."
+  value       = aws_iam_user.admin_server.name
+}
+
 output "orchestrator_ami_id" {
   description = "Prebaked AMI for on-demand orchestrators."
   value       = local.orchestrator_ami_id

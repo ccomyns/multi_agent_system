@@ -30,6 +30,27 @@ resource "aws_s3_bucket_versioning" "audit" {
   }
 }
 
+// Holds one item per multi-agent job plus a single lock item. The admin server
+// writes both in one transaction so at most one job can ever be active.
+resource "aws_dynamodb_table" "jobs" {
+  name         = "${var.project_name}-jobs"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "pk"
+
+  attribute {
+    name = "pk"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled = true
+  }
+}
+
 resource "aws_dynamodb_table" "state" {
   name         = "${var.project_name}-state"
   billing_mode = "PAY_PER_REQUEST"

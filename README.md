@@ -8,6 +8,7 @@ current implementation contains:
   a persistent orchestrator instance.
 - A Lambda function that launches subagent EC2 instances.
 - A hard limit of eight active subagents per orchestrator.
+- A hard limit of one active multi-agent job, enforced by a DynamoDB lock item.
 - DynamoDB transactions for concurrency state.
 - S3 lifecycle audit records.
 - EventBridge reconciliation when subagent instances terminate.
@@ -24,7 +25,9 @@ calls EC2. DynamoDB, rather than Lambda memory, enforces the concurrency limit
 across concurrent Lambda containers.
 
 ```text
-Admin backend --launch template--> EC2 orchestrator (one per run)
+Browser --job_id--> Admin server --DynamoDB transaction--> job record + active-job lock
+                          |
+                          +--launch template--> EC2 orchestrator (one per run)
                                       |
                                       v
                              Lambda subagent manager -----> EC2 subagents
@@ -40,6 +43,21 @@ S3 is an append-only audit destination. DynamoDB is the operational source of
 truth for active counts and agent state. Each subagent item includes its
 orchestrator ID, agent ID, AMI ID, instance type, TTL, state, EC2 instance ID,
 and lifecycle timestamps.
+
+Jobs live in a second table, `<project>-jobs`, which holds two kinds of items:
+one job record per run (`pk = JOB#<job_id>`) and a single lock item
+(`pk = ACTIVE_JOB`). The lock's `active_job_id` references the active job
+record's `pk`. The browser mints the `job_id` and posts it to the admin server,
+which issues one transaction containing two conditional writes: the lock write
+succeeds only if no lock exists, and the job write succeeds only if that
+`job_id` has never been used. Only when the transaction commits does the admin
+server call `ec2:RunInstances`; the returned instance ID is stored as
+`orchestrator_instance_id`, and `orchestrator_id` (initially null) becomes the
+join key into the subagent state table. A job's `status` is `initializing`,
+`running`, `completed`, or `failed`, and `result_s3_prefix` is where the
+orchestrator writes final output. Ending a job terminates its orchestrator and
+deletes the lock in one transaction, so the lock can never outlive the job that
+owns it.
 
 Terraform builds the launch templates and AMIs but launches no runtime
 orchestrator or subagent. EC2 Image Builder temporarily launches build/test
@@ -66,10 +84,27 @@ The console models exactly one active multi-agent run. It shows:
 - Active capacity against the eight-agent limit.
 - Searchable and filterable subagent assignments, instances, and activity.
 
-The UI currently uses typed mock data. It deliberately has no AWS credentials
-or direct browser-to-AWS integration. Terraform exposes the orchestrator
-launch-template IDs for a future authenticated backend; browser code should not
-receive AWS credentials or call `RunInstances` directly.
+Launch a Job is backed by the jobs table through `/api/jobs`; the monitoring
+views still use typed mock data. AWS credentials stay on the Next.js server, so
+browser code never receives credentials or calls `RunInstances` directly.
+
+Terraform creates a `<project>-admin-server` IAM user for this server, but it
+does **not** create access keys. Long-lived secrets must stay out of Terraform
+state and out of this repository. After applying, create a key yourself (or
+prefer a short-lived credential source such as an assumed role / SSO profile)
+and put it only in a local, gitignored environment such as `admin/.env.local`
+or your shell's AWS credential chain:
+
+```bash
+terraform output admin_server_iam_user_name
+aws iam create-access-key --user-name "$(terraform output -raw admin_server_iam_user_name)"
+```
+
+The user's policy spans DynamoDB (job table transactions and read access to
+subagent state), EC2 (`RunInstances`, `CreateTags`, `DescribeInstances`, and
+`TerminateInstances` limited to instances tagged `Role=orchestrator`), IAM
+(`PassRole` for the orchestrator instance profile, restricted to EC2), and S3
+(reading `jobs/*` and `stress-tests/*` in the audit bucket).
 
 Use a supported Node.js LTS release. Node 24 is specified in `admin/.nvmrc`.
 
@@ -81,6 +116,12 @@ npm run dev
 ```
 
 Open `http://localhost:3000`.
+
+To launch real jobs, copy `admin/.env.example` to `admin/.env.local` and set
+`JOBS_TABLE_NAME`, `ORCHESTRATOR_LAUNCH_TEMPLATE_ID`,
+`ORCHESTRATOR_LAUNCH_TEMPLATE_VERSION`, `AUDIT_BUCKET_NAME`, and `AWS_REGION`
+from the Terraform outputs. Launching a job starts a billable `t3.large`
+orchestrator that runs until the job is ended from the console.
 
 To run the real concurrency stress test from the Testing page, copy
 `admin/.env.example` to `admin/.env.local`, set the deployed stress-test launch

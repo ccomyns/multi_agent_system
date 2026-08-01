@@ -3,11 +3,10 @@
 import { ArrowRight, Clock3, FolderOpen, SquarePen } from "lucide-react";
 import Link from "next/link";
 
-import { findActivePreviewJob, usePreviewJobs } from "@/lib/jobs";
+import { useJobs } from "@/lib/use-jobs";
 
 export function JobHome() {
-  const { jobs } = usePreviewJobs();
-  const activeJob = findActivePreviewJob(jobs);
+  const { activeJob, error } = useJobs();
 
   return (
     <div className="job-home-content">
@@ -21,9 +20,16 @@ export function JobHome() {
         <div className="active-job-notice" role="status">
           <Clock3 size={16} aria-hidden="true" />
           <span>
-            <strong>One job is currently active.</strong> Opening Create a Job will return
-            you to <span className="mono">{activeJob.jobId}</span>.
+            <strong>One job is currently active.</strong> The job table holds the lock for{" "}
+            <span className="mono">{activeJob.jobId}</span>, so a new job cannot start until
+            it ends.
           </span>
+        </div>
+      ) : null}
+
+      {error ? (
+        <div className="job-error" role="alert">
+          {error}
         </div>
       ) : null}
 
@@ -56,7 +62,7 @@ export function JobHome() {
       </div>
 
       <p className="job-preview-note">
-        Static preview · job records are stored only in this browser for now.
+        Job records and the single active-job lock live in DynamoDB.
       </p>
     </div>
   );
