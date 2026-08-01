@@ -1,11 +1,12 @@
 "use client";
 
-import { FlaskConical, Layers3, Network } from "lucide-react";
+import { BriefcaseBusiness, FlaskConical, Layers3, Network } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const NAV_ITEMS = [
   { href: "/", label: "Multi Agent System", Icon: Network },
+  { href: "/jobs", label: "Launch a Job", Icon: BriefcaseBusiness },
   { href: "/testing", label: "Testing", Icon: FlaskConical },
 ] as const;
 
@@ -26,7 +27,8 @@ export function Sidebar() {
 
       <nav className="sidebar-nav" aria-label="Primary">
         {NAV_ITEMS.map(({ href, label, Icon }) => {
-          const isActive = pathname === href;
+          const isActive =
+            pathname === href || (href !== "/" && pathname.startsWith(`${href}/`));
           return (
             <Link
               key={href}
