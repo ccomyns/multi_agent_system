@@ -4,7 +4,6 @@ import { ArrowRight, Beaker, Bot, Sparkles } from "lucide-react";
 import { useState } from "react";
 
 import { StatusBadge } from "@/components/status-badge";
-import { TopBar } from "@/components/top-bar";
 import type { ActiveRun } from "@/lib/types";
 
 export function RunDashboard({ run }: { run: ActiveRun }) {
@@ -33,8 +32,6 @@ export function RunDashboard({ run }: { run: ActiveRun }) {
 
   return (
     <div className="app-shell">
-      <TopBar title="Multi Agent Run" />
-
       <main id="multi-agent-run" className="main-content">
         <header className="page-header">
           <div>

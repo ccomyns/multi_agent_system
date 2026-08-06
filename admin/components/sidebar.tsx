@@ -1,12 +1,19 @@
 "use client";
 
-import { BriefcaseBusiness, FlaskConical, Layers3, Network } from "lucide-react";
+import {
+  BriefcaseBusiness,
+  FlaskConical,
+  Layers3,
+  Network,
+  Presentation,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const NAV_ITEMS = [
   { href: "/", label: "Multi Agent System", Icon: Network },
   { href: "/jobs", label: "Launch a Job", Icon: BriefcaseBusiness },
+  { href: "/slides", label: "Slide Deck Builder", Icon: Presentation },
   { href: "/testing", label: "Testing", Icon: FlaskConical },
 ] as const;
 
