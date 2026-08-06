@@ -1,0 +1,5 @@
+#!/bin/bash
+set -euo pipefail
+
+exec /opt/multi-agent/venv/bin/python \
+  /opt/multi-agent/runtime/bin/spawn_agent_mcp.py

@@ -28,6 +28,11 @@ output "admin_server_iam_user_name" {
   value       = aws_iam_user.admin_server.name
 }
 
+output "codex_auth_ssm_parameter_name" {
+  description = "Out-of-band SSM SecureString from which real orchestrators load auth.json."
+  value       = local.codex_auth_ssm_parameter_name
+}
+
 output "orchestrator_ami_id" {
   description = "Prebaked AMI for on-demand orchestrators."
   value       = local.orchestrator_ami_id

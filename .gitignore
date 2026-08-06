@@ -66,3 +66,6 @@ infra/subagent-manager.zip
 *.log
 tmp/
 temp/
+
+# Local Codex continuation checkpoint
+/.codex-memory.md

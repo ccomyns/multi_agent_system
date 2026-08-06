@@ -1,5 +1,10 @@
 locals {
-  orchestrator_bootstrap = <<-EOT
+  codex_auth_ssm_parameter_name = coalesce(
+    var.codex_auth_ssm_parameter_name,
+    "/${var.project_name}/codex/auth-json"
+  )
+
+  orchestrator_environment_bootstrap = <<-EOT
     #!/bin/bash
     set -euo pipefail
 
@@ -19,25 +24,32 @@ locals {
       job_id=""
     fi
 
-    result_s3_prefix=""
-    if [ -n "$job_id" ]; then
-      result_s3_prefix="s3://${aws_s3_bucket.audit.id}/jobs/$job_id/result/"
-    fi
-
     cat > /etc/multi-agent/orchestrator.env <<ENV
     AWS_DEFAULT_REGION=${var.aws_region}
     AWS_REGION=${var.aws_region}
     FUNCTION_NAME=${aws_lambda_function.subagent_manager.function_name}
     AUDIT_BUCKET_NAME=${aws_s3_bucket.audit.id}
+    JOBS_TABLE_NAME=${aws_dynamodb_table.jobs.name}
     JOB_ID=$job_id
-    RESULT_S3_PREFIX=$result_s3_prefix
-    ORCHESTRATOR_ID=orchestrator-$instance_id
+    ORCHESTRATOR_INSTANCE_ID=$instance_id
+    CODEX_AUTH_SSM_PARAMETER_NAME=${local.codex_auth_ssm_parameter_name}
+    ORCHESTRATOR_MODEL=${var.orchestrator_model}
+    SUBAGENT_MODEL=${var.subagent_model}
+    SPAWN_AGENT_MCP_COMMAND=${var.spawn_agent_mcp_command}
+    ORCHESTRATOR_DOCUMENTATION_DIR=/opt/multi-agent/runtime/docs
     ENV
-    chmod 0644 /etc/multi-agent/orchestrator.env
+    chown root:multi-agent /etc/multi-agent/orchestrator.env
+    chmod 0640 /etc/multi-agent/orchestrator.env
+  EOT
+
+  orchestrator_bootstrap = <<-EOT
+    ${local.orchestrator_environment_bootstrap}
+
+    systemctl start --no-block multi-agent-orchestrator.service
   EOT
 
   orchestrator_stress_bootstrap = <<-EOT
-    ${local.orchestrator_bootstrap}
+    ${local.orchestrator_environment_bootstrap}
 
     exec > >(tee /var/log/orchestrator-stress-test.log | logger -t orchestrator-stress-test -s 2>/dev/console) 2>&1
 

@@ -33,6 +33,44 @@ variable "orchestrator_instance_type" {
   default     = "t3.large"
 }
 
+variable "codex_auth_ssm_parameter_name" {
+  description = "Name of the out-of-band SSM SecureString containing Codex auth.json. Null uses /<project_name>/codex/auth-json."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.codex_auth_ssm_parameter_name == null ||
+      can(regex("^/[A-Za-z0-9_./-]+$", var.codex_auth_ssm_parameter_name))
+    )
+    error_message = "codex_auth_ssm_parameter_name must be an absolute SSM parameter name beginning with /."
+  }
+}
+
+variable "orchestrator_model" {
+  description = "Codex model used by the real orchestrator runner."
+  type        = string
+  default     = "gpt-5.6-terra"
+}
+
+variable "subagent_model" {
+  description = "Model passed to the custom spawn_agent MCP server for remote subagents."
+  type        = string
+  default     = "gpt-5.6-luna"
+}
+
+variable "spawn_agent_mcp_command" {
+  description = "Absolute path to the required local spawn_agent MCP server executable on the orchestrator AMI."
+  type        = string
+  default     = "/opt/multi-agent/runtime/bin/spawn-agent-mcp"
+
+  validation {
+    condition     = startswith(var.spawn_agent_mcp_command, "/")
+    error_message = "spawn_agent_mcp_command must be an absolute path."
+  }
+}
+
 variable "subagent_ttl_seconds" {
   description = "Seconds before a subagent shuts down and terminates itself."
   type        = number

@@ -167,6 +167,114 @@ resource "aws_imagebuilder_component" "orchestrator_stress_tools" {
   })
 }
 
+resource "aws_imagebuilder_component" "orchestrator_runtime" {
+  name        = "${var.project_name}-orchestrator-runtime"
+  description = "Install the real job runner and its disabled-by-default systemd service."
+  platform    = "Linux"
+  version     = var.agent_image_version
+
+  data = yamlencode({
+    schemaVersion = 1.0
+    phases = [
+      {
+        name = "build"
+        steps = [
+          {
+            name   = "DownloadOrchestratorRuntime"
+            action = "S3Download"
+            inputs = [
+              {
+                source              = "s3://${aws_s3_bucket.audit.id}/${aws_s3_object.orchestrator_runtime.key}"
+                destination         = "/tmp/orchestrator-runtime.zip"
+                expectedBucketOwner = data.aws_caller_identity.current.account_id
+                overwrite           = true
+              }
+            ]
+          },
+          {
+            name   = "InstallOrchestratorRuntime"
+            action = "ExecuteBash"
+            inputs = {
+              commands = [
+                <<-EOT
+                  set -euo pipefail
+
+                  if ! id multi-agent >/dev/null 2>&1; then
+                    useradd --system --create-home --home-dir /var/lib/multi-agent \
+                      --shell /usr/sbin/nologin multi-agent
+                  fi
+                  install -d -o multi-agent -g multi-agent -m 0700 \
+                    /var/lib/multi-agent /var/lib/multi-agent/jobs \
+                    /var/lib/multi-agent/codex-home
+
+                  /opt/multi-agent/venv/bin/pip install --no-cache-dir \
+                    'mcp>=1.27,<2'
+
+                  echo "${filesha256(data.archive_file.orchestrator_runtime.output_path)}  /tmp/orchestrator-runtime.zip" \
+                    | sha256sum --check
+                  install -d -o root -g root -m 0755 /opt/multi-agent/runtime
+                  python3 -m zipfile --extract \
+                    /tmp/orchestrator-runtime.zip /opt/multi-agent/runtime
+                  chown -R root:root /opt/multi-agent/runtime
+                  find /opt/multi-agent/runtime -type d -exec chmod 0755 {} +
+                  find /opt/multi-agent/runtime -type f -exec chmod 0644 {} +
+                  chmod 0755 /opt/multi-agent/runtime/bin/orchestrator_runner.py
+                  chmod 0755 /opt/multi-agent/runtime/bin/spawn-agent-mcp
+                  rm -f /tmp/orchestrator-runtime.zip
+
+                  cat > /etc/systemd/system/multi-agent-orchestrator.service <<'UNIT'
+                  [Unit]
+                  Description=Multi-agent research orchestrator
+                  After=network-online.target cloud-final.service
+                  Wants=network-online.target
+                  ConditionPathExists=/etc/multi-agent/orchestrator.env
+
+                  [Service]
+                  Type=oneshot
+                  User=multi-agent
+                  Group=multi-agent
+                  EnvironmentFile=/etc/multi-agent/orchestrator.env
+                  ExecStart=/opt/multi-agent/venv/bin/python /opt/multi-agent/runtime/bin/orchestrator_runner.py
+                  ExecStopPost=+/sbin/shutdown -h now
+                  TimeoutStartSec=infinity
+                  StandardOutput=journal
+                  StandardError=journal
+
+                  [Install]
+                  WantedBy=multi-user.target
+                  UNIT
+                  chmod 0644 /etc/systemd/system/multi-agent-orchestrator.service
+                  systemctl daemon-reload
+                EOT
+              ]
+            }
+          }
+        ]
+      },
+      {
+        name = "validate"
+        steps = [
+          {
+            name   = "ValidateOrchestratorRuntime"
+            action = "ExecuteBash"
+            inputs = {
+              commands = [
+                "set -euo pipefail",
+                "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/orchestrator_runner.py",
+                "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/spawn_agent_mcp.py",
+                "/opt/multi-agent/venv/bin/python -c 'from mcp.server.fastmcp import FastMCP'",
+                "test -x /opt/multi-agent/runtime/bin/spawn-agent-mcp",
+                "systemd-analyze verify /etc/systemd/system/multi-agent-orchestrator.service",
+                "test ! -e /etc/systemd/system/multi-user.target.wants/multi-agent-orchestrator.service",
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  })
+}
+
 resource "aws_imagebuilder_component" "subagent_browser_tools" {
   name        = "${var.project_name}-subagent-browser-tools"
   description = "Install current Playwright and its bundled Chromium browser."
@@ -245,6 +353,10 @@ resource "aws_imagebuilder_image_recipe" "orchestrator" {
     component_arn = aws_imagebuilder_component.orchestrator_stress_tools.arn
   }
 
+  component {
+    component_arn = aws_imagebuilder_component.orchestrator_runtime.arn
+  }
+
   block_device_mapping {
     device_name = data.aws_ami.ubuntu_2404.root_device_name
 
@@ -320,6 +432,7 @@ resource "aws_imagebuilder_infrastructure_configuration" "agents" {
   }
 
   depends_on = [
+    aws_iam_role_policy.image_builder_artifacts,
     aws_iam_role_policy_attachment.image_builder,
     aws_iam_role_policy_attachment.image_builder_ssm,
   ]

@@ -141,6 +141,24 @@ resource "aws_iam_role_policy" "orchestrator" {
         Resource = aws_lambda_function.subagent_manager.arn
       },
       {
+        Sid    = "ReadAndFinishOwnJob"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:TransactWriteItems"
+        ]
+        Resource = aws_dynamodb_table.jobs.arn
+      },
+      {
+        Sid    = "ReadAndRefreshCodexAuth"
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:PutParameter"
+        ]
+        Resource = "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.codex_auth_ssm_parameter_name}"
+      },
+      {
         Effect   = "Allow"
         Action   = "s3:PutObject"
         Resource = "${aws_s3_bucket.audit.arn}/stress-tests/*"
@@ -183,6 +201,20 @@ resource "aws_iam_role_policy_attachment" "image_builder" {
 resource "aws_iam_role_policy_attachment" "image_builder_ssm" {
   role       = aws_iam_role.image_builder.name
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_role_policy" "image_builder_artifacts" {
+  name = "read-image-build-artifacts"
+  role = aws_iam_role.image_builder.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "s3:GetObject"
+      Resource = "${aws_s3_bucket.audit.arn}/image-build/*"
+    }]
+  })
 }
 
 // Long-lived identity behind the admin server. Its credentials never reach the
