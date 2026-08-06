@@ -184,7 +184,7 @@ resource "aws_imagebuilder_component" "orchestrator_runtime" {
             action = "S3Download"
             inputs = [
               {
-                source              = "s3://${aws_s3_bucket.audit.id}/${aws_s3_object.orchestrator_runtime.key}"
+                source              = "s3://${aws_s3_bucket.agent_workspace.id}/${aws_s3_object.orchestrator_runtime.key}"
                 destination         = "/tmp/orchestrator-runtime.zip"
                 expectedBucketOwner = data.aws_caller_identity.current.account_id
                 overwrite           = true

@@ -29,6 +29,8 @@ locals {
     AWS_REGION=${var.aws_region}
     FUNCTION_NAME=${aws_lambda_function.subagent_manager.function_name}
     AUDIT_BUCKET_NAME=${aws_s3_bucket.audit.id}
+    AGENT_WORKSPACE_BUCKET_NAME=${aws_s3_bucket.agent_workspace.id}
+    GLOBAL_MEMORY_BUCKET_NAME=${aws_s3_bucket.global_memory.id}
     JOBS_TABLE_NAME=${aws_dynamodb_table.jobs.name}
     JOB_ID=$job_id
     ORCHESTRATOR_INSTANCE_ID=$instance_id

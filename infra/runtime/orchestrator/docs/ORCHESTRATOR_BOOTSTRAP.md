@@ -6,8 +6,9 @@ The normal EC2 launch template gets its short, job-specific user data from
 `multi-agent-orchestrator.service`.
 
 The durable runtime source lives under `runtime/orchestrator/`. Terraform
-packages that whole directory as a versioned ZIP artifact in private S3. EC2
-Image Builder downloads and expands it under `/opt/multi-agent/runtime`; this
+packages that whole directory as a versioned ZIP artifact in the private
+agent-workspace bucket. EC2 Image Builder downloads and expands it under
+`/opt/multi-agent/runtime`; this
 keeps scripts and documentation out of the 16 KB inline component document and
 lets the bundle grow independently. The systemd service is installed disabled
 and is started only by the normal launch template. The stress-test template
@@ -52,13 +53,26 @@ The runner:
    job workspace as `documentation/`.
 5. Runs the original task with `gpt-5.6-terra`, a workspace-write sandbox, no
    interactive approvals, and live native search via `codex --search exec`.
-6. Uploads the final response to `jobs/<job_id>/result/final.md`.
+6. Uploads the final response to
+   `s3://<agent-workspace>/jobs/<job_id>/result/final.md`.
 7. Atomically marks the job completed or failed and releases `ACTIVE_JOB`.
 8. Shuts down; the launch template converts shutdown into EC2 termination.
 
 The default `SUBAGENT_MODEL=gpt-5.6-luna` is passed to the MCP server. The MCP
 server must apply that value when it launches a subagent; it is not controlled
 by the orchestrator's `--model` flag.
+
+## S3 data boundaries
+
+- `AUDIT_BUCKET_NAME` is reserved for lifecycle and stress-test audit records.
+- `AGENT_WORKSPACE_BUCKET_NAME` contains job-scoped inputs, intermediate
+  artifacts, subagent outputs, final results, and Image Builder runtime bundles.
+- `GLOBAL_MEMORY_BUCKET_NAME` contains curated knowledge that persists across
+  jobs. It is read-only for both orchestrators and subagents.
+
+Orchestrators and subagents write research output only to the current job's
+workspace. A separate trusted ingestion or curation workflow is responsible
+for adding data to global memory.
 
 ## Local spawn-agent MCP server
 

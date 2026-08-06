@@ -87,19 +87,45 @@ resource "aws_iam_instance_profile" "subagent" {
 }
 
 resource "aws_iam_role_policy" "subagent" {
-  name = "audit-bucket"
+  name = "workspace-and-memory"
   role = aws_iam_role.subagent.id
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "s3:GetObject",
-        "s3:PutObject"
-      ]
-      Resource = "${aws_s3_bucket.audit.arn}/agent-data/*"
-    }]
+    Statement = [
+      {
+        Sid      = "ListAgentWorkspace"
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = aws_s3_bucket.agent_workspace.arn
+        Condition = {
+          StringLike = {
+            "s3:prefix" = "jobs/*"
+          }
+        }
+      },
+      {
+        Sid    = "ReadWriteAgentWorkspace"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject"
+        ]
+        Resource = "${aws_s3_bucket.agent_workspace.arn}/jobs/*"
+      },
+      {
+        Sid      = "ListGlobalMemory"
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = aws_s3_bucket.global_memory.arn
+      },
+      {
+        Sid      = "ReadGlobalMemory"
+        Effect   = "Allow"
+        Action   = "s3:GetObject"
+        Resource = "${aws_s3_bucket.global_memory.arn}/*"
+      }
+    ]
   })
 }
 
@@ -164,10 +190,36 @@ resource "aws_iam_role_policy" "orchestrator" {
         Resource = "${aws_s3_bucket.audit.arn}/stress-tests/*"
       },
       {
-        Sid      = "WriteJobResults"
+        Sid      = "ListAgentWorkspace"
         Effect   = "Allow"
-        Action   = "s3:PutObject"
-        Resource = "${aws_s3_bucket.audit.arn}/jobs/*"
+        Action   = "s3:ListBucket"
+        Resource = aws_s3_bucket.agent_workspace.arn
+        Condition = {
+          StringLike = {
+            "s3:prefix" = "jobs/*"
+          }
+        }
+      },
+      {
+        Sid    = "ReadWriteAgentWorkspace"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject"
+        ]
+        Resource = "${aws_s3_bucket.agent_workspace.arn}/jobs/*"
+      },
+      {
+        Sid      = "ListGlobalMemory"
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = aws_s3_bucket.global_memory.arn
+      },
+      {
+        Sid      = "ReadGlobalMemory"
+        Effect   = "Allow"
+        Action   = "s3:GetObject"
+        Resource = "${aws_s3_bucket.global_memory.arn}/*"
       }
     ]
   })
@@ -212,7 +264,7 @@ resource "aws_iam_role_policy" "image_builder_artifacts" {
     Statement = [{
       Effect   = "Allow"
       Action   = "s3:GetObject"
-      Resource = "${aws_s3_bucket.audit.arn}/image-build/*"
+      Resource = "${aws_s3_bucket.agent_workspace.arn}/system/image-build/*"
     }]
   })
 }
@@ -308,18 +360,32 @@ resource "aws_iam_user_policy" "admin_server" {
 
         Condition = {
           StringLike = {
-            "s3:prefix" = ["jobs/*", "stress-tests/*"]
+            "s3:prefix" = "stress-tests/*"
           }
         }
       },
       {
-        Sid    = "ReadJobAndStressResults"
-        Effect = "Allow"
-        Action = "s3:GetObject"
-        Resource = [
-          "${aws_s3_bucket.audit.arn}/jobs/*",
-          "${aws_s3_bucket.audit.arn}/stress-tests/*"
-        ]
+        Sid      = "ListAgentWorkspace"
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = aws_s3_bucket.agent_workspace.arn
+        Condition = {
+          StringLike = {
+            "s3:prefix" = "jobs/*"
+          }
+        }
+      },
+      {
+        Sid      = "ReadJobResults"
+        Effect   = "Allow"
+        Action   = "s3:GetObject"
+        Resource = "${aws_s3_bucket.agent_workspace.arn}/jobs/*"
+      },
+      {
+        Sid      = "ReadStressResults"
+        Effect   = "Allow"
+        Action   = "s3:GetObject"
+        Resource = "${aws_s3_bucket.audit.arn}/stress-tests/*"
       }
     ]
   })

@@ -61,7 +61,7 @@ class SpawnAgentMcpTests(unittest.TestCase):
     environment = {
         "AWS_REGION": "us-east-1",
         "FUNCTION_NAME": "subagent-manager",
-        "AUDIT_BUCKET_NAME": "audit-bucket",
+        "AGENT_WORKSPACE_BUCKET_NAME": "agent-workspace-bucket",
         "JOB_ID": "job_abc1_1234abcd",
         "ORCHESTRATOR_INSTANCE_ID": "i-1234567890abcdef0",
         "SUBAGENT_MODEL": "gpt-5.6-luna",
@@ -97,6 +97,7 @@ class SpawnAgentMcpTests(unittest.TestCase):
             self.environment["JOB_ID"], "Investigate revenue quality."
         )
         stored = s3.put_object.call_args.kwargs
+        self.assertEqual(stored["Bucket"], "agent-workspace-bucket")
         stored_record = json.loads(stored["Body"])
         self.assertEqual(stored_record["task"], "Investigate revenue quality.")
         self.assertEqual(stored_record["model"], "gpt-5.6-luna")

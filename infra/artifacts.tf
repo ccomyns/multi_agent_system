@@ -9,8 +9,8 @@ data "archive_file" "orchestrator_runtime" {
 }
 
 resource "aws_s3_object" "orchestrator_runtime" {
-  bucket = aws_s3_bucket.audit.id
-  key    = "image-build/orchestrator/${filesha256(data.archive_file.orchestrator_runtime.output_path)}/runtime.zip"
+  bucket = aws_s3_bucket.agent_workspace.id
+  key    = "system/image-build/orchestrator/${filesha256(data.archive_file.orchestrator_runtime.output_path)}/runtime.zip"
   source = data.archive_file.orchestrator_runtime.output_path
 
   source_hash            = data.archive_file.orchestrator_runtime.output_base64sha256

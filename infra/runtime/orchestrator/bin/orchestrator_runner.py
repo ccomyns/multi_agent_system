@@ -43,7 +43,8 @@ class OrchestratorRun:
 
         self.orchestrator_instance_id = required_env("ORCHESTRATOR_INSTANCE_ID")
         self.jobs_table = required_env("JOBS_TABLE_NAME")
-        self.audit_bucket = required_env("AUDIT_BUCKET_NAME")
+        self.workspace_bucket = required_env("AGENT_WORKSPACE_BUCKET_NAME")
+        self.global_memory_bucket = required_env("GLOBAL_MEMORY_BUCKET_NAME")
         self.auth_parameter = required_env("CODEX_AUTH_SSM_PARAMETER_NAME")
         self.orchestrator_model = required_env("ORCHESTRATOR_MODEL")
         self.subagent_model = required_env("SUBAGENT_MODEL")
@@ -133,7 +134,7 @@ env_vars = [
   "AWS_REGION",
   "AWS_DEFAULT_REGION",
   "FUNCTION_NAME",
-  "AUDIT_BUCKET_NAME",
+  "AGENT_WORKSPACE_BUCKET_NAME",
   "JOB_ID",
   "ORCHESTRATOR_INSTANCE_ID",
   "SUBAGENT_MODEL",
@@ -167,7 +168,11 @@ approval_mode = "approve"
             "subagents to investigate. You may call spawn in subagents after you have "
             "created your plan.md file. The system documentation supplied with this "
             "orchestrator is available in the documentation/ directory; read the "
-            "relevant files before querying or interpreting system data."
+            "relevant files before querying or interpreting system data. The "
+            "GLOBAL_MEMORY_BUCKET_NAME environment variable identifies durable "
+            "cross-job memory. Read relevant memory during planning. Global memory "
+            "is read-only for this orchestrator and all subagents; do not attempt to "
+            "create, update, or delete objects there."
         )
         self.write_codex_config(developer_instructions)
 
@@ -200,13 +205,13 @@ approval_mode = "approve"
     def upload_result(self) -> str:
         key = f"jobs/{self.job_id}/result/final.md"
         self.s3.put_object(
-            Bucket=self.audit_bucket,
+            Bucket=self.workspace_bucket,
             Key=key,
             Body=self.final_message.read_bytes(),
             ContentType="text/markdown; charset=utf-8",
             ServerSideEncryption="AES256",
         )
-        return f"s3://{self.audit_bucket}/{key}"
+        return f"s3://{self.workspace_bucket}/{key}"
 
     def finish_job(self, status: str) -> None:
         finished_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

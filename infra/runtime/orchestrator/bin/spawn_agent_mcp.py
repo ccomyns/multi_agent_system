@@ -74,7 +74,7 @@ def spawn_agent(task: str) -> dict[str, Any]:
 
     region = required_env("AWS_REGION")
     function_name = required_env("FUNCTION_NAME")
-    audit_bucket = required_env("AUDIT_BUCKET_NAME")
+    workspace_bucket = required_env("AGENT_WORKSPACE_BUCKET_NAME")
     job_id = required_env("JOB_ID")
     orchestrator_instance_id = required_env("ORCHESTRATOR_INSTANCE_ID")
     model = required_env("SUBAGENT_MODEL")
@@ -82,7 +82,7 @@ def spawn_agent(task: str) -> dict[str, Any]:
     agent_id = stable_agent_id(job_id, normalized_task)
     created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     input_key = f"jobs/{job_id}/agents/{agent_id}/input.json"
-    input_uri = f"s3://{audit_bucket}/{input_key}"
+    input_uri = f"s3://{workspace_bucket}/{input_key}"
     input_record = {
         "schema_version": 1,
         "job_id": job_id,
@@ -94,7 +94,7 @@ def spawn_agent(task: str) -> dict[str, Any]:
     }
 
     boto3.client("s3", region_name=region).put_object(
-        Bucket=audit_bucket,
+        Bucket=workspace_bucket,
         Key=input_key,
         Body=json.dumps(input_record, sort_keys=True).encode("utf-8"),
         ContentType="application/json",

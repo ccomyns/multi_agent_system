@@ -10,7 +10,8 @@ current implementation contains:
 - A hard limit of eight active subagents per orchestrator.
 - A hard limit of one active multi-agent job, enforced by a DynamoDB lock item.
 - DynamoDB transactions for concurrency state.
-- S3 lifecycle audit records.
+- Separate S3 buckets for lifecycle audit records, durable global memory, and
+  per-job agent workspaces.
 - EventBridge reconciliation when subagent instances terminate.
 - An on-demand, self-terminating orchestrator stress-test launch template.
 - A Next.js operations console.
@@ -39,8 +40,13 @@ Browser --job_id--> Admin server --DynamoDB transaction--> job record + active-j
 Subagent terminated event -----> EventBridge -----> Lambda reconciliation
 ```
 
-S3 is an append-only audit destination. DynamoDB is the operational source of
-truth for active counts and agent state. Each subagent item includes its
+The audit bucket is an append-only lifecycle destination. The global-memory
+bucket holds durable knowledge across jobs, while the agent-workspace bucket
+holds task specifications, intermediate artifacts, and results under
+`jobs/<job_id>/`. DynamoDB is the operational source of truth for active counts
+and agent state. Both orchestrators and subagents have read-only access to
+global memory; they write job output only to the agent workspace. Each subagent
+item includes its
 orchestrator ID, agent ID, AMI ID, instance type, TTL, state, EC2 instance ID,
 and lifecycle timestamps.
 
@@ -103,7 +109,8 @@ The user's policy spans DynamoDB (job table transactions and read access to
 subagent state), EC2 (`RunInstances`, `CreateTags`, `DescribeInstances`, and
 `TerminateInstances` limited to instances tagged `Role=orchestrator`), IAM
 (`PassRole` for the orchestrator instance profile, restricted to EC2), and S3
-(reading `jobs/*` and `stress-tests/*` in the audit bucket).
+(reading `jobs/*` in the agent-workspace bucket and `stress-tests/*` in the
+audit bucket).
 
 Use a supported Node.js LTS release. Node 24 is specified in `admin/.nvmrc`.
 

@@ -3,6 +3,16 @@ output "audit_bucket_name" {
   value       = aws_s3_bucket.audit.id
 }
 
+output "global_memory_bucket_name" {
+  description = "S3 bucket containing durable memory shared across multi-agent jobs."
+  value       = aws_s3_bucket.global_memory.id
+}
+
+output "agent_workspace_bucket_name" {
+  description = "S3 bucket containing per-job agent inputs, artifacts, and results."
+  value       = aws_s3_bucket.agent_workspace.id
+}
+
 output "lambda_function_name" {
   description = "Name to use when invoking the subagent manager."
   value       = aws_lambda_function.subagent_manager.function_name
@@ -20,7 +30,7 @@ output "jobs_table_name" {
 
 output "job_results_prefix" {
   description = "S3 location under which each orchestrator writes its final output."
-  value       = "s3://${aws_s3_bucket.audit.id}/jobs/"
+  value       = "s3://${aws_s3_bucket.agent_workspace.id}/jobs/"
 }
 
 output "admin_server_iam_user_name" {
