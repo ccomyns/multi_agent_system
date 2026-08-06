@@ -50,15 +50,10 @@ export function SavedJobs() {
               <p>{job.originalTask}</p>
               <dl className="saved-job-card-facts">
                 <div>
-                  <dt>Orchestrator</dt>
-                  <dd className="mono">{job.orchestratorId ?? "null"}</dd>
-                </div>
-                <div>
-                  <dt>Results</dt>
-                  <dd className="mono">{job.resultS3Prefix}</dd>
+                  <dt>Orchestrator instance</dt>
+                  <dd className="mono">{job.orchestratorInstanceId ?? "null"}</dd>
                 </div>
               </dl>
-              {job.failureReason ? <p className="saved-job-failure">{job.failureReason}</p> : null}
               <time dateTime={job.createdAt}>
                 Created {new Date(job.createdAt).toLocaleString()}
               </time>

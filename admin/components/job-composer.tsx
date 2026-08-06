@@ -49,26 +49,20 @@ export function JobComposer() {
             </span>
             <div>
               <strong>
-                {job.orchestratorId ? "Orchestrator launched" : "Waiting on the orchestrator"}
+                {job.orchestratorInstanceId
+                  ? "Orchestrator launched"
+                  : "Waiting on the orchestrator"}
               </strong>
               <p>
-                {job.orchestratorId
-                  ? "The orchestrator is booting and will report subagent activity under this orchestrator ID."
-                  : "The job record holds the lock. Its orchestrator ID is still null."}
+                {job.orchestratorInstanceId
+                  ? "The orchestrator is booting and will report subagent activity under this EC2 instance ID."
+                  : "The job record holds the lock. Its orchestrator instance ID is still null."}
               </p>
 
               <dl className="job-record-facts">
                 <div>
-                  <dt>Orchestrator</dt>
-                  <dd className="mono">{job.orchestratorId ?? "null"}</dd>
-                </div>
-                <div>
-                  <dt>Instance</dt>
+                  <dt>Orchestrator instance</dt>
                   <dd className="mono">{job.orchestratorInstanceId ?? "null"}</dd>
-                </div>
-                <div>
-                  <dt>Results</dt>
-                  <dd className="mono">{job.resultS3Prefix}</dd>
                 </div>
               </dl>
 

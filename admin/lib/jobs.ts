@@ -6,12 +6,9 @@ export type Job = {
   status: JobStatus;
   createdAt: string;
   updatedAt: string;
-  orchestratorId: string | null;
   orchestratorInstanceId: string | null;
   launchedAt: string | null;
   finishedAt: string | null;
-  failureReason: string | null;
-  resultS3Prefix: string;
 };
 
 export type JobsSnapshot = {

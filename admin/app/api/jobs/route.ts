@@ -37,12 +37,9 @@ type JobItem = {
   status?: unknown;
   created_at?: unknown;
   updated_at?: unknown;
-  orchestrator_id?: unknown;
   orchestrator_instance_id?: unknown;
   launched_at?: unknown;
   finished_at?: unknown;
-  failure_reason?: unknown;
-  result_s3_prefix?: unknown;
 };
 
 const JOB_STATUSES: JobStatus[] = ["initializing", "running", "completed", "failed"];
@@ -60,15 +57,13 @@ function errorResponse(error: string, status: number) {
 function configuration() {
   const jobsTable = process.env.JOBS_TABLE_NAME;
   const launchTemplateId = process.env.ORCHESTRATOR_LAUNCH_TEMPLATE_ID;
-  const auditBucket = process.env.AUDIT_BUCKET_NAME;
-  if (!jobsTable || !launchTemplateId || !auditBucket) {
+  if (!jobsTable || !launchTemplateId) {
     return null;
   }
   return {
     jobsTable,
     launchTemplateId,
     launchTemplateVersion: process.env.ORCHESTRATOR_LAUNCH_TEMPLATE_VERSION || "$Default",
-    auditBucket,
     region: process.env.AWS_REGION,
   };
 }
@@ -86,10 +81,6 @@ function jobPk(jobId: string) {
 
 function jobKey(jobId: string) {
   return { pk: jobPk(jobId) };
-}
-
-function resultPrefix(auditBucket: string, jobId: string) {
-  return `s3://${auditBucket}/jobs/${jobId}/result/`;
 }
 
 function isJobStatus(value: unknown): value is JobStatus {
@@ -115,13 +106,10 @@ function toJob(item: Record<string, unknown> | undefined): Job | null {
     status: record.status,
     createdAt: record.created_at,
     updatedAt: typeof record.updated_at === "string" ? record.updated_at : record.created_at,
-    orchestratorId: typeof record.orchestrator_id === "string" ? record.orchestrator_id : null,
     orchestratorInstanceId:
       typeof record.orchestrator_instance_id === "string" ? record.orchestrator_instance_id : null,
     launchedAt: typeof record.launched_at === "string" ? record.launched_at : null,
     finishedAt: typeof record.finished_at === "string" ? record.finished_at : null,
-    failureReason: typeof record.failure_reason === "string" ? record.failure_reason : null,
-    resultS3Prefix: typeof record.result_s3_prefix === "string" ? record.result_s3_prefix : "",
   };
 }
 
@@ -171,7 +159,7 @@ export async function GET() {
   const config = configuration();
   if (!config) {
     return errorResponse(
-      "The admin server is missing JOBS_TABLE_NAME, ORCHESTRATOR_LAUNCH_TEMPLATE_ID, or AUDIT_BUCKET_NAME.",
+      "The admin server is missing JOBS_TABLE_NAME or ORCHESTRATOR_LAUNCH_TEMPLATE_ID.",
       503,
     );
   }
@@ -209,7 +197,7 @@ export async function POST(request: Request) {
   const config = configuration();
   if (!config) {
     return errorResponse(
-      "The admin server is missing JOBS_TABLE_NAME, ORCHESTRATOR_LAUNCH_TEMPLATE_ID, or AUDIT_BUCKET_NAME.",
+      "The admin server is missing JOBS_TABLE_NAME or ORCHESTRATOR_LAUNCH_TEMPLATE_ID.",
       503,
     );
   }
@@ -269,11 +257,8 @@ export async function POST(request: Request) {
                 created_at: createdAt,
                 updated_at: createdAt,
                 orchestrator_instance_id: null,
-                orchestrator_id: null,
                 launched_at: null,
                 finished_at: null,
-                failure_reason: null,
-                result_s3_prefix: resultPrefix(config.auditBucket, jobId),
               },
               ConditionExpression: "attribute_not_exists(pk)",
             },
@@ -341,15 +326,12 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Orchestrator launch failed", error);
     const reason = error instanceof Error ? error.message : "The orchestrator could not be launched.";
-    await releaseJob(documents, config.jobsTable, jobId, "failed", reason);
+    await releaseJob(documents, config.jobsTable, jobId, "failed");
     documents.destroy();
     ec2.destroy();
     return errorResponse(reason, 502);
   }
 
-  // The orchestrator ID is the join key into the subagent state table, and it is
-  // only knowable once EC2 hands back the instance ID.
-  const orchestratorId = `orchestrator-${instanceId}`;
   const launchedAt = new Date().toISOString();
   try {
     const updated = await documents.send(
@@ -357,12 +339,11 @@ export async function POST(request: Request) {
         TableName: config.jobsTable,
         Key: jobKey(jobId),
         UpdateExpression:
-          "SET #status = :running, orchestrator_id = :orchestratorId, orchestrator_instance_id = :instanceId, launched_at = :now, updated_at = :now",
+          "SET #status = :running, orchestrator_instance_id = :instanceId, launched_at = :now, updated_at = :now",
         ConditionExpression: "attribute_exists(pk)",
         ExpressionAttributeNames: { "#status": "status" },
         ExpressionAttributeValues: {
           ":running": "running",
-          ":orchestratorId": orchestratorId,
           ":instanceId": instanceId,
           ":now": launchedAt,
         },
@@ -378,13 +359,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Job record could not be linked to its orchestrator", error);
     await terminateOrchestrator(ec2, instanceId);
-    await releaseJob(
-      documents,
-      config.jobsTable,
-      jobId,
-      "failed",
-      "The orchestrator launched but its job record could not be updated, so it was terminated.",
-    );
+    await releaseJob(documents, config.jobsTable, jobId, "failed");
     return errorResponse(
       "The orchestrator launched but its job record could not be updated, so it was terminated.",
       502,
@@ -399,7 +374,7 @@ export async function DELETE(request: Request) {
   const config = configuration();
   if (!config) {
     return errorResponse(
-      "The admin server is missing JOBS_TABLE_NAME, ORCHESTRATOR_LAUNCH_TEMPLATE_ID, or AUDIT_BUCKET_NAME.",
+      "The admin server is missing JOBS_TABLE_NAME or ORCHESTRATOR_LAUNCH_TEMPLATE_ID.",
       503,
     );
   }
@@ -449,7 +424,6 @@ async function releaseJob(
   jobsTable: string,
   jobId: string,
   status: Extract<JobStatus, "completed" | "failed">,
-  failureReason?: string,
 ): Promise<Job | null> {
   const finishedAt = new Date().toISOString();
   try {
@@ -468,15 +442,12 @@ async function releaseJob(
             Update: {
               TableName: jobsTable,
               Key: jobKey(jobId),
-              UpdateExpression: failureReason
-                ? "SET #status = :status, finished_at = :now, updated_at = :now, failure_reason = :reason"
-                : "SET #status = :status, finished_at = :now, updated_at = :now",
+              UpdateExpression: "SET #status = :status, finished_at = :now, updated_at = :now",
               ConditionExpression: "attribute_exists(pk)",
               ExpressionAttributeNames: { "#status": "status" },
               ExpressionAttributeValues: {
                 ":status": status,
                 ":now": finishedAt,
-                ...(failureReason ? { ":reason": failureReason } : {}),
               },
             },
           },

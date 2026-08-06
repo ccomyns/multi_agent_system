@@ -52,10 +52,9 @@ which issues one transaction containing two conditional writes: the lock write
 succeeds only if no lock exists, and the job write succeeds only if that
 `job_id` has never been used. Only when the transaction commits does the admin
 server call `ec2:RunInstances`; the returned instance ID is stored as
-`orchestrator_instance_id`, and `orchestrator_id` (initially null) becomes the
-join key into the subagent state table. A job's `status` is `initializing`,
-`running`, `completed`, or `failed`, and `result_s3_prefix` is where the
-orchestrator writes final output. Ending a job terminates its orchestrator and
+`orchestrator_instance_id` and also serves as the join key into the subagent
+state table. A job's `status` is `initializing`, `running`, `completed`, or
+`failed`. Ending a job terminates its orchestrator and
 deletes the lock in one transaction, so the lock can never outlive the job that
 owns it.
 
