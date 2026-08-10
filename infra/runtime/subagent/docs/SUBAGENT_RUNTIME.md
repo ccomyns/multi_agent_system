@@ -8,21 +8,27 @@ Image Builder and unrelated boots cannot accidentally run it.
 The runner downloads and validates
 `jobs/<job_id>/agents/<agent_id>/input.json`, then runs Codex non-interactively
 with approvals disabled. Codex has a workspace-write sandbox rooted at `/work`,
-additional writable roots `/summary` and `/result`, and outbound network access.
-The ordinary `/tmp` roots are excluded and `TMPDIR` is redirected to
-`/work/tmp`, keeping task-generated temporary content within `/work`.
+an additional writable root at `/summary`, and outbound network access. Only the
+supervisor writes `/result`. The ordinary `/tmp` roots are excluded and
+`TMPDIR` is redirected to `/work/tmp`, keeping task-generated temporary content
+within `/work`.
 
 The filesystem contract is:
 
 - `/work`: task input, code, downloads, and all working artifacts.
-- `/summary/summary.md`: concise work log, methods, sources, conclusions, and
-  caveats.
-- `/result/result.md`: final response captured by `codex exec
-  --output-last-message`.
+- `/summary/summary.md`: approach, methods, sources, significant findings,
+  useful work artifacts, and caveats.
+- `/summary/results_<agent_id>.json`: the gathered data as a structured JSON
+  object or array.
+- `/result/completed.md` or `/result/failure.md`: a brief terminal marker
+  written by the supervisor, not a research output.
 
-After Codex exits, the runner requires both Markdown files to be non-empty. It
-uploads the summary first, then the result, then a completion record beneath the
-agent's S3 prefix. Only then does the runner exit successfully.
+After Codex exits, the runner requires a non-empty summary and a non-empty,
+valid JSON dataset. It uploads those files first, then writes and uploads
+`status/completed.json`, and finally writes and uploads `completed.md` as the
+terminal readiness flag. If execution or publication fails, it publishes
+`status/failed.json` and then `failure.md` when possible. The terminal marker is
+the last publication step; the runner exits immediately afterward.
 
 The systemd unit always invokes `shutdown -h now` after the runner exits. EC2's
 instance-initiated shutdown behavior is `terminate`, so the instance and its

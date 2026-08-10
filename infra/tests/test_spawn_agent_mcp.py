@@ -5,6 +5,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -153,6 +154,134 @@ class SpawnAgentMcpTests(unittest.TestCase):
         self.assertEqual(result["status_code"], 429)
         self.assertEqual(result["error"], "active_subagent_limit_reached")
         self.assertEqual(result["max_active_subagents"], 8)
+
+    def test_collect_agent_results_downloads_summary_and_json_but_not_marker(self) -> None:
+        agent_id = "agent-0123456789abcdef01234567"
+        s3 = Mock()
+
+        class MissingObject(Exception):
+            response = {"Error": {"Code": "NoSuchKey"}}
+
+        completed_status = {
+            "schema_version": 1,
+            "state": "completed",
+            "job_id": self.environment["JOB_ID"],
+            "orchestrator_instance_id": self.environment["ORCHESTRATOR_INSTANCE_ID"],
+            "agent_id": agent_id,
+        }
+
+        def head_object(**kwargs):
+            if kwargs["Key"].endswith("/result/completed.md"):
+                return {}
+            raise MissingObject()
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            agent_prefix = f"jobs/{self.environment['JOB_ID']}/agents/{agent_id}"
+            objects = {
+                f"{agent_prefix}/status/completed.json": json.dumps(completed_status).encode(
+                    "utf-8"
+                ),
+                f"{agent_prefix}/summary/summary.md": b"Approach and findings",
+                f"{agent_prefix}/summary/results_{agent_id}.json": (
+                    b'{"records":[{"value":42}]}'
+                ),
+            }
+            if key not in objects:
+                raise MissingObject()
+            return {"Body": io.BytesIO(objects[key]), "ContentLength": len(objects[key])}
+
+        s3.head_object.side_effect = head_object
+        s3.get_object.side_effect = get_object
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = {
+                **self.environment,
+                "ORCHESTRATOR_WORKSPACE": temporary,
+            }
+            with patch.dict(os.environ, environment, clear=True):
+                with patch.object(server_module.boto3, "client", return_value=s3):
+                    result = server_module.collect_agent_results([agent_id], timeout_seconds=0)
+
+            completed = result["completed"][0]
+            self.assertEqual(Path(completed["summary_path"]).read_text(), "Approach and findings")
+            self.assertEqual(
+                json.loads(Path(completed["results_path"]).read_text()),
+                {"records": [{"value": 42}]},
+            )
+            self.assertTrue(result["all_terminal"])
+            self.assertFalse(result["terminal_markers_downloaded"])
+            requested_keys = [call.kwargs["Key"] for call in s3.get_object.call_args_list]
+            self.assertNotIn(
+                f"jobs/{self.environment['JOB_ID']}/agents/{agent_id}/result/completed.md",
+                requested_keys,
+            )
+            self.assertTrue(
+                any(
+                    call.kwargs["Key"].endswith("/result/completed.md")
+                    for call in s3.head_object.call_args_list
+                )
+            )
+
+    def test_collect_agent_results_returns_pending_after_timeout(self) -> None:
+        agent_id = "agent-0123456789abcdef01234567"
+        s3 = Mock()
+
+        class MissingObject(Exception):
+            response = {"Error": {"Code": "NoSuchKey"}}
+
+        s3.head_object.side_effect = MissingObject()
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = {
+                **self.environment,
+                "ORCHESTRATOR_WORKSPACE": temporary,
+            }
+            with patch.dict(os.environ, environment, clear=True):
+                with patch.object(server_module.boto3, "client", return_value=s3):
+                    result = server_module.collect_agent_results([agent_id], timeout_seconds=0)
+
+        self.assertFalse(result["all_terminal"])
+        self.assertTrue(result["timed_out"])
+        self.assertEqual(result["pending"], [agent_id])
+
+    def test_collection_reports_subagent_failure_without_downloading_marker(self) -> None:
+        agent_id = "agent-0123456789abcdef01234567"
+        s3 = Mock()
+
+        class MissingObject(Exception):
+            response = {"Error": {"Code": "NoSuchKey"}}
+
+        failed_status = {
+            "schema_version": 1,
+            "state": "failed",
+            "job_id": self.environment["JOB_ID"],
+            "orchestrator_instance_id": self.environment["ORCHESTRATOR_INSTANCE_ID"],
+            "agent_id": agent_id,
+            "error_type": "RuntimeError",
+            "error": "research failed",
+        }
+
+        def head_object(**kwargs):
+            if kwargs["Key"].endswith("/result/completed.md"):
+                raise MissingObject()
+            return {}
+
+        def get_object(**kwargs):
+            return {"Body": io.BytesIO(json.dumps(failed_status).encode("utf-8"))}
+
+        s3.head_object.side_effect = head_object
+        s3.get_object.side_effect = get_object
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = {
+                **self.environment,
+                "ORCHESTRATOR_WORKSPACE": temporary,
+            }
+            with patch.dict(os.environ, environment, clear=True):
+                with patch.object(server_module.boto3, "client", return_value=s3):
+                    result = server_module.collect_agent_results([agent_id], timeout_seconds=0)
+
+        self.assertTrue(result["all_terminal"])
+        self.assertEqual(result["failed"][0]["state"], "failed")
+        self.assertEqual(result["failed"][0]["error"], "research failed")
 
 
 if __name__ == "__main__":

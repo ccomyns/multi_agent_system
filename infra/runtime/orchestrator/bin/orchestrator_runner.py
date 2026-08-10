@@ -137,11 +137,15 @@ env_vars = [
   "AGENT_WORKSPACE_BUCKET_NAME",
   "JOB_ID",
   "ORCHESTRATOR_INSTANCE_ID",
+  "ORCHESTRATOR_WORKSPACE",
   "SUBAGENT_MODEL",
 ]
 default_tools_approval_mode = "approve"
 
 [mcp_servers.subagent_manager.tools.spawn_agent]
+approval_mode = "approve"
+
+[mcp_servers.subagent_manager.tools.collect_agent_results]
 approval_mode = "approve"
 """
         destination = self.codex_home / "config.toml"
@@ -159,14 +163,23 @@ approval_mode = "approve"
         developer_instructions = (
             f"You have been given the following task: {task}. "
             "You have access to codex's native search tool, along with a "
-            "custom-designed spawn_agent(task) local MCP tool. To begin, you must "
+            "local subagent-manager MCP server exposing spawn_agent(task) and "
+            "collect_agent_results(agent_ids, timeout_seconds, poll_interval_seconds). "
+            "To begin, you must "
             "create a plan.md file to brainstorm and figure out how you will best "
             "curate a response to the original_task. You should also use the plan.md "
             "to map out the subtasks that you will allocate to subagents. Please use "
             "the search tool during the planning phase if you think that it would help "
             "you accomplish your task/help you brainstorm different questions for the "
             "subagents to investigate. You may call spawn in subagents after you have "
-            "created your plan.md file. The system documentation supplied with this "
+            "created your plan.md file. Launch all planned subagents before waiting for "
+            "any of them, retain every accepted agent_id, and then call "
+            "collect_agent_results once with the full batch so their data collection runs "
+            "in parallel. The collection tool returns local paths to summary.md and "
+            "results_<agent_id>.json; read both for every completed subagent. It does not "
+            "download terminal marker files. If collection times out with pending agents, "
+            "call it again for only those agents when appropriate. The system documentation "
+            "supplied with this "
             "orchestrator is available in the documentation/ directory; read the "
             "relevant files before querying or interpreting system data. The "
             "GLOBAL_MEMORY_BUCKET_NAME environment variable identifies durable "
@@ -178,6 +191,7 @@ approval_mode = "approve"
 
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(self.codex_home)
+        environment["ORCHESTRATOR_WORKSPACE"] = str(self.workspace)
         command = [
             "codex",
             "--search",

@@ -82,11 +82,20 @@ class OrchestratorRunnerTests(unittest.TestCase):
             self.assertEqual(command[command.index("--sandbox") + 1], "workspace-write")
             self.assertEqual(command[-1], task)
             self.assertEqual(call.call_args.kwargs["env"]["CODEX_HOME"], str(run.codex_home))
+            self.assertEqual(
+                call.call_args.kwargs["env"]["ORCHESTRATOR_WORKSPACE"],
+                str(run.workspace),
+            )
 
             config = (run.codex_home / "config.toml").read_text(encoding="utf-8")
             self.assertIn("You have been given the following task", config)
             self.assertIn("create a plan.md file", config)
             self.assertIn("[mcp_servers.subagent_manager.tools.spawn_agent]", config)
+            self.assertIn(
+                "[mcp_servers.subagent_manager.tools.collect_agent_results]",
+                config,
+            )
+            self.assertIn('"ORCHESTRATOR_WORKSPACE"', config)
             self.assertIn('"SUBAGENT_MODEL"', config)
             self.assertEqual(
                 (run.workspace / "documentation" / "DATABASE.md").read_text(encoding="utf-8"),

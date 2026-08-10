@@ -74,14 +74,15 @@ Orchestrators and subagents write research output only to the current job's
 workspace. A separate trusted ingestion or curation workflow is responsible
 for adding data to global memory.
 
-## Local spawn-agent MCP server
+## Local subagent-manager MCP server
 
 The runtime includes `/opt/multi-agent/runtime/bin/spawn-agent-mcp`, a required
-stdio MCP server that exposes only `spawn_agent(task)`. Codex starts it from the
-job-local MCP configuration. The server uses the orchestrator EC2 instance ID
-as its grouping identity and derives job identity, Lambda routing, Luna model
-selection, and a deterministic agent ID from trusted environment variables
-rather than model-controlled arguments.
+stdio MCP server that exposes `spawn_agent(task)` and
+`collect_agent_results(agent_ids, timeout_seconds, poll_interval_seconds)`.
+Codex starts it from the job-local MCP configuration. The server uses the
+orchestrator EC2 instance ID as its grouping identity and derives job identity,
+Lambda routing, Luna model selection, and deterministic agent IDs from trusted
+environment variables rather than model-controlled arguments.
 
 Before invoking Lambda, it writes the complete task specification under
 `jobs/<job_id>/agents/<agent_id>/input.json`. The current Lambda accepts the
@@ -90,8 +91,16 @@ passes trusted identity to the subagent bootstrap. The subagent downloads the
 input, runs Codex, and publishes:
 
 - `jobs/<job_id>/agents/<agent_id>/summary/summary.md`
-- `jobs/<job_id>/agents/<agent_id>/result/result.md`
+- `jobs/<job_id>/agents/<agent_id>/summary/results_<agent_id>.json`
+- `jobs/<job_id>/agents/<agent_id>/result/completed.md` or `failure.md`
 - `jobs/<job_id>/agents/<agent_id>/status/completed.json` or `failed.json`
 
-The spawn call returns after EC2 accepts the instance launch; result collection
-is asynchronous and remains a separate orchestrator concern.
+The spawn call returns after EC2 accepts the instance launch. After launching
+the planned batch, the orchestrator passes the accepted agent IDs to
+`collect_agent_results`. That tool checks the exact `completed.md` and
+`failure.md` S3 keys with metadata-only requests, then downloads only
+`summary.md` and `results_<agent_id>.json` into
+`<orchestrator workspace>/subagents/<agent_id>/`, and returns their local paths.
+The terminal Markdown markers remain in S3 and are not returned to Codex. A
+bounded collection timeout returns pending IDs so the orchestrator can call the
+tool again without relaunching agents.

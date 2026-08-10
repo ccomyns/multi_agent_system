@@ -50,7 +50,10 @@ class SubagentRunnerTests(unittest.TestCase):
         run.summary_dir = root / "summary"
         run.result_dir = root / "result"
         run.summary_file = run.summary_dir / "summary.md"
-        run.result_file = run.result_dir / "result.md"
+        run.results_file = run.summary_dir / f"results_{run.agent_id}.json"
+        run.completed_file = run.result_dir / "completed.md"
+        run.failure_file = run.result_dir / "failure.md"
+        run.codex_final_message = run.work_dir / "codex-final-message.md"
         run.codex_home = root / "codex-home"
         run.s3 = Mock()
         run.ssm = Mock()
@@ -102,7 +105,7 @@ class SubagentRunnerTests(unittest.TestCase):
 
             def complete_codex(command, **kwargs):
                 run.summary_file.write_text("Work summary", encoding="utf-8")
-                run.result_file.write_text("Final result", encoding="utf-8")
+                run.results_file.write_text('{"records": [{"value": 42}]}', encoding="utf-8")
                 return Mock(returncode=0)
 
             with patch.object(
@@ -122,26 +125,66 @@ class SubagentRunnerTests(unittest.TestCase):
                 call.call_args.kwargs["env"]["TMPDIR"],
                 str(run.work_dir / "tmp"),
             )
+            self.assertEqual(
+                command[command.index("--output-last-message") + 1],
+                str(run.codex_final_message),
+            )
 
             config = (run.codex_home / "config.toml").read_text(encoding="utf-8")
             self.assertIn('approval_policy = "never"', config)
-            self.assertIn('writable_roots = ["/summary", "/result"]', config)
+            self.assertIn('writable_roots = ["/summary"]', config)
             self.assertIn("network_access = true", config)
             self.assertIn("exclude_slash_tmp = true", config)
 
-    def test_summary_upload_precedes_result_and_completion_status(self) -> None:
+    def test_invalid_results_json_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+
+            def complete_codex(command, **kwargs):
+                run.summary_file.write_text("Work summary", encoding="utf-8")
+                run.results_file.write_text("not-json", encoding="utf-8")
+                return Mock(returncode=0)
+
+            with patch.object(runner_module.subprocess, "run", side_effect=complete_codex):
+                with self.assertRaisesRegex(RuntimeError, "valid UTF-8 JSON"):
+                    run.run_codex("Investigate revenue quality.")
+
+    def test_completion_marker_is_uploaded_last(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run = self.make_run(Path(temporary))
             run.summary_file.write_text("Work summary", encoding="utf-8")
-            run.result_file.write_text("Final result", encoding="utf-8")
+            run.results_file.write_text('{"records": []}', encoding="utf-8")
 
-            outputs = run.upload_outputs()
+            outputs = run.upload_data_outputs()
+            outputs["completion_marker_uri"] = run.terminal_marker_uri("completed")
             run.upload_status("completed", **outputs)
+            run.upload_terminal_marker("completed")
 
             calls = run.s3.put_object.call_args_list
             self.assertEqual(calls[0].kwargs["Key"], f"{run.agent_prefix}/summary/summary.md")
-            self.assertEqual(calls[1].kwargs["Key"], f"{run.agent_prefix}/result/result.md")
+            self.assertEqual(
+                calls[1].kwargs["Key"],
+                f"{run.agent_prefix}/summary/results_{run.agent_id}.json",
+            )
             self.assertEqual(calls[2].kwargs["Key"], f"{run.agent_prefix}/status/completed.json")
+            self.assertEqual(calls[3].kwargs["Key"], f"{run.agent_prefix}/result/completed.md")
+            self.assertEqual(
+                run.completed_file.read_text(encoding="utf-8"),
+                "Completed successfully.\n",
+            )
+
+    def test_failure_marker_is_brief_and_separate_from_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+
+            uri = run.upload_terminal_marker("failed")
+
+            self.assertEqual(run.failure_file.read_text(encoding="utf-8"), "Run failed.\n")
+            self.assertFalse(run.completed_file.exists())
+            self.assertEqual(
+                uri,
+                f"s3://{run.workspace_bucket}/{run.agent_prefix}/result/failure.md",
+            )
 
 
 if __name__ == "__main__":

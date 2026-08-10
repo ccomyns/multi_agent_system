@@ -8,7 +8,8 @@ current implementation contains:
   a persistent orchestrator instance.
 - A Lambda function that launches subagent EC2 instances.
 - A real subagent runtime that downloads S3 task specifications, runs Codex,
-  publishes summary and result files, and self-terminates.
+  publishes a research summary, structured JSON dataset, and terminal marker,
+  then self-terminates.
 - A hard limit of eight active subagents per orchestrator.
 - A hard limit of one active multi-agent job, enforced by a DynamoDB lock item.
 - DynamoDB transactions for concurrency state.
@@ -35,7 +36,7 @@ Browser --job_id--> Admin server --DynamoDB transaction--> job record + active-j
                                       v
                              Lambda subagent manager -----> EC2 subagents
                                       |                         |
-                                      +----> DynamoDB state     +----> S3 summary + result
+                                      +----> DynamoDB state     +----> S3 summary + JSON data
                                       |                         +----> terminate on completion
                                       |
                                       +----> S3 audit records
@@ -53,10 +54,14 @@ item includes its
 orchestrator ID, agent ID, AMI ID, instance type, TTL, state, EC2 instance ID,
 and lifecycle timestamps. A real subagent downloads
 `jobs/<job_id>/agents/<agent_id>/input.json`, keeps all working files under
-`/work`, writes `/summary/summary.md`, and finishes with `/result/result.md`.
-The runner uploads those files beneath the same S3 agent prefix before the
-instance shuts down. The 30-minute TTL is a hard backstop for hung runs, not the
-normal completion mechanism.
+`/work`, and writes `/summary/summary.md` plus
+`/summary/results_<agent_id>.json`. The supervisor uploads those data products,
+writes a brief `/result/completed.md` or `/result/failure.md` terminal marker,
+and publishes a machine-readable status record before the instance shuts down.
+The orchestrator's local MCP server polls for those terminal markers without
+downloading them, then downloads only the summary and JSON dataset. The
+30-minute TTL is a hard backstop for hung runs, not the normal completion
+mechanism.
 
 Jobs live in a second table, `<project>-jobs`, which holds two kinds of items:
 one job record per run (`pk = JOB#<job_id>`) and a single lock item

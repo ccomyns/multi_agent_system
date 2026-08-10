@@ -21,6 +21,8 @@ LOG = logging.getLogger("subagent-runner")
 JOB_ID_PATTERN = re.compile(r"^job_[a-z0-9]{4,12}_[0-9a-f]{8}$")
 AGENT_ID_PATTERN = re.compile(r"^agent-[0-9a-f]{24}$")
 INSTANCE_ID_PATTERN = re.compile(r"^i-[0-9a-f]{8,17}$")
+MAX_SUMMARY_BYTES = 1024 * 1024
+MAX_RESULTS_BYTES = 50 * 1024 * 1024
 
 
 def required_env(name: str) -> str:
@@ -69,7 +71,10 @@ class SubagentRun:
         self.summary_dir = Path("/summary")
         self.result_dir = Path("/result")
         self.summary_file = self.summary_dir / "summary.md"
-        self.result_file = self.result_dir / "result.md"
+        self.results_file = self.summary_dir / f"results_{self.agent_id}.json"
+        self.completed_file = self.result_dir / "completed.md"
+        self.failure_file = self.result_dir / "failure.md"
+        self.codex_final_message = self.work_dir / "codex-final-message.md"
         self.codex_home = Path("/var/lib/multi-agent/codex-home")
 
         self.s3 = boto3.client("s3", region_name=self.region)
@@ -141,14 +146,19 @@ class SubagentRun:
 
     def write_codex_config(self) -> None:
         instructions = (
-            "You are one research subagent working on one focused task. Store every "
+            "You are one data-mining subagent working on one focused task. Store every "
             "working artifact, code file, cloned repository, and internet download under "
             "/work only. Do not write working content elsewhere. Before finishing, create "
-            "/summary/summary.md with a concise account of the work performed, methods, "
-            "sources, useful artifacts in /work, conclusions, and caveats. Only after that "
-            "summary exists, provide your final answer; the runner records that final answer "
-            "as /result/result.md. Do not shut down or terminate the machine yourself. The "
-            "runner verifies and uploads both required files before the service shuts down. "
+            "/summary/summary.md explaining the approach you took, sources and methods used, "
+            "significant findings, useful artifacts in /work, and any caveats. Also create "
+            f"/summary/results_{self.agent_id}.json containing the data you gathered as valid "
+            "JSON. Prefer a JSON object with a records array plus source and field metadata "
+            "when that shape fits the task. Do not use the summary as a substitute for the "
+            "structured dataset. The supervisor validates and uploads both files, then writes "
+            "/result/completed.md; if the run fails, it writes /result/failure.md instead. "
+            "Those result-directory files are brief terminal markers, not research outputs. "
+            "Do not create either marker yourself, and do not shut down or terminate the "
+            "machine yourself. The service shuts the machine down after publication. "
             "GLOBAL_MEMORY_BUCKET_NAME identifies durable cross-job memory. It is read-only; "
             "never create, update, or delete objects in that bucket."
         )
@@ -161,7 +171,7 @@ cli_auth_credentials_store = "file"
 developer_instructions = {toml_string(instructions)}
 
 [sandbox_workspace_write]
-writable_roots = ["/summary", "/result"]
+writable_roots = ["/summary"]
 network_access = true
 exclude_slash_tmp = true
 exclude_tmpdir_env_var = true
@@ -192,13 +202,17 @@ exclude_tmpdir_env_var = true
             "--cd",
             str(self.work_dir),
             "--output-last-message",
-            str(self.result_file),
+            str(self.codex_final_message),
             task,
         ]
         LOG.info("starting Codex for agent %s with model %s", self.agent_id, self.model)
         subprocess.run(command, env=environment, check=True)
 
-        for path in (self.summary_file, self.result_file):
+        size_limits = {
+            self.summary_file: MAX_SUMMARY_BYTES,
+            self.results_file: MAX_RESULTS_BYTES,
+        }
+        for path, size_limit in size_limits.items():
             metadata = path.lstat() if path.exists() else None
             if (
                 metadata is None
@@ -207,29 +221,75 @@ exclude_tmpdir_env_var = true
                 or metadata.st_size == 0
             ):
                 raise RuntimeError(f"Codex completed without creating required file {path}")
+            if metadata.st_size > size_limit:
+                raise RuntimeError(f"{path} exceeds the {size_limit}-byte publication limit")
 
-    def upload_outputs(self) -> dict[str, str]:
+        try:
+            summary_text = self.summary_file.read_text(encoding="utf-8")
+        except UnicodeDecodeError as error:
+            raise RuntimeError(f"{self.summary_file} must contain valid UTF-8") from error
+        if not summary_text.strip():
+            raise RuntimeError(f"{self.summary_file} must not be blank")
+
+        try:
+            parsed_results = json.loads(self.results_file.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"{self.results_file} must contain valid UTF-8 JSON") from error
+        if not isinstance(parsed_results, (dict, list)):
+            raise RuntimeError(f"{self.results_file} must contain a JSON object or array")
+
+    def upload_data_outputs(self) -> dict[str, str]:
         destinations = {
             "summary_uri": (
                 self.summary_file,
                 f"{self.agent_prefix}/summary/summary.md",
+                "text/markdown; charset=utf-8",
             ),
-            "result_uri": (
-                self.result_file,
-                f"{self.agent_prefix}/result/result.md",
+            "results_uri": (
+                self.results_file,
+                f"{self.agent_prefix}/summary/results_{self.agent_id}.json",
+                "application/json",
             ),
         }
         uploaded: dict[str, str] = {}
-        for name, (source, key) in destinations.items():
+        for name, (source, key, content_type) in destinations.items():
             self.s3.put_object(
                 Bucket=self.workspace_bucket,
                 Key=key,
                 Body=source.read_bytes(),
-                ContentType="text/markdown; charset=utf-8",
+                ContentType=content_type,
                 ServerSideEncryption="AES256",
             )
             uploaded[name] = f"s3://{self.workspace_bucket}/{key}"
         return uploaded
+
+    def terminal_marker_uri(self, state: str) -> str:
+        if state not in {"completed", "failed"}:
+            raise ValueError(f"unsupported terminal marker state: {state}")
+        marker_name = "completed.md" if state == "completed" else "failure.md"
+        return f"s3://{self.workspace_bucket}/{self.agent_prefix}/result/{marker_name}"
+
+    def upload_terminal_marker(self, state: str) -> str:
+        if state == "completed":
+            marker = self.completed_file
+            message = "Completed successfully.\n"
+        elif state == "failed":
+            marker = self.failure_file
+            message = "Run failed.\n"
+        else:
+            raise ValueError(f"unsupported terminal marker state: {state}")
+
+        marker.write_text(message, encoding="utf-8")
+        os.chmod(marker, 0o600)
+        key = f"{self.agent_prefix}/result/{marker.name}"
+        self.s3.put_object(
+            Bucket=self.workspace_bucket,
+            Key=key,
+            Body=marker.read_bytes(),
+            ContentType="text/markdown; charset=utf-8",
+            ServerSideEncryption="AES256",
+        )
+        return f"s3://{self.workspace_bucket}/{key}"
 
     def upload_status(self, state: str, **details: Any) -> None:
         record = {
@@ -264,8 +324,10 @@ def main() -> int:
         task_spec = run.download_task()
         run.install_auth()
         run.run_codex(task_spec["task"])
-        outputs = run.upload_outputs()
+        outputs = run.upload_data_outputs()
+        outputs["completion_marker_uri"] = run.terminal_marker_uri("completed")
         run.upload_status("completed", **outputs)
+        run.upload_terminal_marker("completed")
         LOG.info("completed agent %s; service shutdown will terminate the instance", run.agent_id)
         return 0
     except Exception as error:
@@ -276,7 +338,9 @@ def main() -> int:
                     "failed",
                     error_type=type(error).__name__,
                     error=str(error)[:1000],
+                    failure_marker_uri=run.terminal_marker_uri("failed"),
                 )
+                run.upload_terminal_marker("failed")
             except Exception:
                 LOG.exception("could not upload subagent failure status")
         return 1
