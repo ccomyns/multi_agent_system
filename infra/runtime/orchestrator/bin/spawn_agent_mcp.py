@@ -21,8 +21,8 @@ mcp = FastMCP(
         "Use spawn_agent(task) only after the orchestration plan has been written. "
         "Each call stores a versioned task specification and asks the configured "
         "Lambda to reserve capacity and launch one EC2 subagent. Retrying the exact "
-        "same task within a job is idempotent. The current EC2 subagent bootstrap "
-        "does not yet consume the stored task or return research results."
+        "same task within a job is idempotent. The EC2 subagent downloads the stored "
+        "task and publishes summary and result Markdown files beneath its job prefix."
     ),
 )
 
@@ -59,7 +59,7 @@ def decode_lambda_response(response: dict[str, Any]) -> tuple[int, dict[str, Any
 
 @mcp.tool()
 def spawn_agent(task: str) -> dict[str, Any]:
-    """Launch one Luna research subagent for a focused task.
+    """Launch one research subagent for a focused task.
 
     The caller supplies only the research task. Job identity, orchestrator
     identity, model selection, request id, storage location, and Lambda routing
@@ -133,7 +133,7 @@ def spawn_agent(task: str) -> dict[str, Any]:
         "error": body.get("error"),
         "model": model,
         "task_s3_uri": input_uri,
-        "task_delivery": "stored_not_consumed_by_current_subagent_bootstrap",
+        "task_delivery": "stored_for_subagent_runtime",
     }
 
 

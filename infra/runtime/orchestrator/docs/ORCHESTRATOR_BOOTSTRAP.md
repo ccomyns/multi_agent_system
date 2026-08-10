@@ -85,7 +85,13 @@ rather than model-controlled arguments.
 
 Before invoking Lambda, it writes the complete task specification under
 `jobs/<job_id>/agents/<agent_id>/input.json`. The current Lambda accepts the
-additional job, task URI, and model fields without using them, and the current
-subagent bootstrap still only sleeps until its TTL. Implementing the subagent
-runner that consumes this input and publishes a result remains the next
-pipeline stage.
+job, task URI, and model fields, validates the canonical task location, and
+passes trusted identity to the subagent bootstrap. The subagent downloads the
+input, runs Codex, and publishes:
+
+- `jobs/<job_id>/agents/<agent_id>/summary/summary.md`
+- `jobs/<job_id>/agents/<agent_id>/result/result.md`
+- `jobs/<job_id>/agents/<agent_id>/status/completed.json` or `failed.json`
+
+The spawn call returns after EC2 accepts the instance launch; result collection
+is asynchronous and remains a separate orchestrator concern.

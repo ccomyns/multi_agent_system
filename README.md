@@ -7,6 +7,8 @@ current implementation contains:
 - On-demand `t3.large` orchestrator launch templates; Terraform does not create
   a persistent orchestrator instance.
 - A Lambda function that launches subagent EC2 instances.
+- A real subagent runtime that downloads S3 task specifications, runs Codex,
+  publishes summary and result files, and self-terminates.
 - A hard limit of eight active subagents per orchestrator.
 - A hard limit of one active multi-agent job, enforced by a DynamoDB lock item.
 - DynamoDB transactions for concurrency state.
@@ -33,7 +35,8 @@ Browser --job_id--> Admin server --DynamoDB transaction--> job record + active-j
                                       v
                              Lambda subagent manager -----> EC2 subagents
                                       |                         |
-                                      +----> DynamoDB state     +----> terminate after 30 minutes
+                                      +----> DynamoDB state     +----> S3 summary + result
+                                      |                         +----> terminate on completion
                                       |
                                       +----> S3 audit records
 
@@ -48,7 +51,12 @@ and agent state. Both orchestrators and subagents have read-only access to
 global memory; they write job output only to the agent workspace. Each subagent
 item includes its
 orchestrator ID, agent ID, AMI ID, instance type, TTL, state, EC2 instance ID,
-and lifecycle timestamps.
+and lifecycle timestamps. A real subagent downloads
+`jobs/<job_id>/agents/<agent_id>/input.json`, keeps all working files under
+`/work`, writes `/summary/summary.md`, and finishes with `/result/result.md`.
+The runner uploads those files beneath the same S3 agent prefix before the
+instance shuts down. The 30-minute TTL is a hard backstop for hung runs, not the
+normal completion mechanism.
 
 Jobs live in a second table, `<project>-jobs`, which holds two kinds of items:
 one job record per run (`pk = JOB#<job_id>`) and a single lock item
@@ -67,8 +75,8 @@ owns it.
 Terraform builds the launch templates and AMIs but launches no runtime
 orchestrator or subagent. EC2 Image Builder temporarily launches build/test
 instances while creating each AMI and terminates those workers after the build.
-The admin backend will eventually launch one orchestrator from the normal
-launch template for each run and terminate it when the run is complete.
+The admin backend launches one orchestrator from the normal launch template for
+each run and terminates it when the run is complete.
 
 ## Repository
 
@@ -192,19 +200,26 @@ estimated cost have been reviewed.
 Applying this configuration builds two AMIs:
 
 - Orchestrator: Codex CLI, DuckDB CLI, and the Python stress-test harness.
-- Subagent: Codex CLI, DuckDB CLI, Playwright, and Playwright's Chromium build.
+- Subagent: Codex CLI, DuckDB CLI, Playwright, Chromium, and the S3-delivered
+  task runner.
 
 Both runtime roles default to `t3.large`. Subagents self-terminate after 1,800
 seconds (30 minutes). The AMIs use Ubuntu 24.04 because it is an operating
 system supported by Playwright.
 
 The install components request current software releases at image-build time.
-An existing AMI does not update itself. To rebuild both AMIs with current
-releases, increment the semantic image version and apply again:
+An existing AMI does not update itself. Orchestrator and subagent image versions
+are separate so one can be rebuilt without unnecessarily rebuilding the other.
+The current versions are:
 
 ```hcl
-agent_image_version = "1.0.1"
+orchestrator_image_version = "1.0.1"
+agent_image_version        = "1.0.1"
 ```
+
+Increment `orchestrator_image_version` for orchestrator runtime or recipe
+changes. Increment `agent_image_version` when shared agent tools or the
+subagent image change.
 
 The AMI build creates temporary EC2 instances and persistent EBS-backed AMIs,
 so it takes longer and costs more than a configuration-only Terraform apply.
@@ -233,9 +248,11 @@ launched from this template:
   termination.
 
 The eight accepted Lambda calls create `t3.large` subagents from the prebaked
-browser AMI. DynamoDB atomically records the counter and per-agent metadata
-before EC2 is called, then updates the item with the instance ID and launch
-state. EventBridge updates the records when the subagents terminate.
+browser AMI in stress mode. Stress-mode calls deliberately omit task metadata,
+so those instances retain the TTL-only lifecycle instead of starting Codex.
+DynamoDB atomically records the counter and per-agent metadata before EC2 is
+called, then updates the item with the instance ID and launch state. EventBridge
+updates the records when the subagents terminate.
 
 ## Data Safety
 

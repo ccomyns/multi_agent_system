@@ -17,3 +17,20 @@ resource "aws_s3_object" "orchestrator_runtime" {
   content_type           = "application/zip"
   server_side_encryption = "AES256"
 }
+
+data "archive_file" "subagent_runtime" {
+  type        = "zip"
+  source_dir  = "${path.module}/runtime/subagent"
+  output_path = "${path.module}/subagent-runtime.zip"
+  excludes    = ["**/__pycache__/**", "**/*.pyc"]
+}
+
+resource "aws_s3_object" "subagent_runtime" {
+  bucket = aws_s3_bucket.agent_workspace.id
+  key    = "system/image-build/subagent/${filesha256(data.archive_file.subagent_runtime.output_path)}/runtime.zip"
+  source = data.archive_file.subagent_runtime.output_path
+
+  source_hash            = data.archive_file.subagent_runtime.output_base64sha256
+  content_type           = "application/zip"
+  server_side_encryption = "AES256"
+}

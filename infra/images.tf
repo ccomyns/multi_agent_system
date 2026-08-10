@@ -171,7 +171,7 @@ resource "aws_imagebuilder_component" "orchestrator_runtime" {
   name        = "${var.project_name}-orchestrator-runtime"
   description = "Install the real job runner and its disabled-by-default systemd service."
   platform    = "Linux"
-  version     = var.agent_image_version
+  version     = var.orchestrator_image_version
 
   data = yamlencode({
     schemaVersion = 1.0
@@ -339,11 +339,122 @@ resource "aws_imagebuilder_component" "subagent_browser_tools" {
   })
 }
 
+resource "aws_imagebuilder_component" "subagent_runtime" {
+  name        = "${var.project_name}-subagent-runtime"
+  description = "Install the S3 task runner and self-terminating systemd service."
+  platform    = "Linux"
+  version     = var.agent_image_version
+
+  data = yamlencode({
+    schemaVersion = 1.0
+    phases = [
+      {
+        name = "build"
+        steps = [
+          {
+            name   = "DownloadSubagentRuntime"
+            action = "S3Download"
+            inputs = [
+              {
+                source              = "s3://${aws_s3_bucket.agent_workspace.id}/${aws_s3_object.subagent_runtime.key}"
+                destination         = "/tmp/subagent-runtime.zip"
+                expectedBucketOwner = data.aws_caller_identity.current.account_id
+                overwrite           = true
+              }
+            ]
+          },
+          {
+            name   = "InstallSubagentRuntime"
+            action = "ExecuteBash"
+            inputs = {
+              commands = [
+                <<-EOT
+                  set -euo pipefail
+
+                  if ! id multi-agent >/dev/null 2>&1; then
+                    useradd --system --create-home --home-dir /var/lib/multi-agent \
+                      --shell /usr/sbin/nologin multi-agent
+                  fi
+                  install -d -o multi-agent -g multi-agent -m 0700 \
+                    /var/lib/multi-agent /var/lib/multi-agent/codex-home \
+                    /work /summary /result
+
+                  if [ ! -x /opt/multi-agent/venv/bin/python ]; then
+                    install -d -m 0755 /opt/multi-agent
+                    python3 -m venv /opt/multi-agent/venv
+                  fi
+                  /opt/multi-agent/venv/bin/pip install --no-cache-dir --upgrade pip boto3
+
+                  echo "${filesha256(data.archive_file.subagent_runtime.output_path)}  /tmp/subagent-runtime.zip" \
+                    | sha256sum --check
+                  install -d -o root -g root -m 0755 /opt/multi-agent/runtime
+                  python3 -m zipfile --extract \
+                    /tmp/subagent-runtime.zip /opt/multi-agent/runtime
+                  chown -R root:root /opt/multi-agent/runtime
+                  find /opt/multi-agent/runtime -type d -exec chmod 0755 {} +
+                  find /opt/multi-agent/runtime -type f -exec chmod 0644 {} +
+                  chmod 0755 /opt/multi-agent/runtime/bin/subagent_runner.py
+                  chmod 0755 /opt/multi-agent/runtime/bin/run-subagent
+                  rm -f /tmp/subagent-runtime.zip
+
+                  cat > /etc/systemd/system/multi-agent-subagent.service <<'UNIT'
+                  [Unit]
+                  Description=Multi-agent research subagent
+                  After=network-online.target cloud-final.service
+                  Wants=network-online.target
+                  ConditionPathExists=/etc/multi-agent/subagent.env
+
+                  [Service]
+                  Type=oneshot
+                  User=multi-agent
+                  Group=multi-agent
+                  EnvironmentFile=/etc/multi-agent/subagent.env
+                  ExecStart=/opt/multi-agent/runtime/bin/run-subagent
+                  ExecStopPost=+/sbin/shutdown -h now
+                  TimeoutStartSec=infinity
+                  KillMode=control-group
+                  StandardOutput=journal
+                  StandardError=journal
+
+                  [Install]
+                  WantedBy=multi-user.target
+                  UNIT
+                  chmod 0644 /etc/systemd/system/multi-agent-subagent.service
+                  systemctl daemon-reload
+                EOT
+              ]
+            }
+          }
+        ]
+      },
+      {
+        name = "validate"
+        steps = [
+          {
+            name   = "ValidateSubagentRuntime"
+            action = "ExecuteBash"
+            inputs = {
+              commands = [
+                "set -euo pipefail",
+                "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/subagent_runner.py",
+                "/opt/multi-agent/venv/bin/python -c 'import boto3'",
+                "test -x /opt/multi-agent/runtime/bin/run-subagent",
+                "systemd-analyze verify /etc/systemd/system/multi-agent-subagent.service",
+                "test ! -e /etc/systemd/system/multi-user.target.wants/multi-agent-subagent.service",
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  })
+}
+
 resource "aws_imagebuilder_image_recipe" "orchestrator" {
   name         = "${var.project_name}-orchestrator"
   description  = "Ubuntu orchestrator image with Codex CLI, DuckDB, and the stress-test harness."
   parent_image = data.aws_ami.ubuntu_2404.id
-  version      = var.agent_image_version
+  version      = var.orchestrator_image_version
 
   component {
     component_arn = aws_imagebuilder_component.agent_core.arn
@@ -390,6 +501,10 @@ resource "aws_imagebuilder_image_recipe" "subagent" {
 
   component {
     component_arn = aws_imagebuilder_component.subagent_browser_tools.arn
+  }
+
+  component {
+    component_arn = aws_imagebuilder_component.subagent_runtime.arn
   }
 
   block_device_mapping {

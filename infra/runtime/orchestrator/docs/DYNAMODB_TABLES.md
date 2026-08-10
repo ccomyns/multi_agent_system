@@ -32,9 +32,10 @@ Records grouped beneath `pk = ORCHESTRATOR#<orchestrator_id>`:
 - `sk = AGENT#<agent_id>`: one subagent reservation and EC2 lifecycle record.
 
 Agent records contain provisioning state, active status, AMI and instance type,
-TTL, EC2 instance ID, timestamps, and errors. The `instance-index` GSI maps an
-EC2 instance ID back to its agent record so termination events can decrement
-the correct orchestrator counter exactly once.
+TTL, EC2 instance ID, timestamps, and errors. Real-job records also include the
+job ID, canonical S3 task URI, and configured model. The `instance-index` GSI
+maps an EC2 instance ID back to its agent record so termination events can
+decrement the correct orchestrator counter exactly once.
 
 The subagent-manager Lambda owns writes to this table. The orchestrator itself
 is a grouping identifier here, not an `AGENT` record.

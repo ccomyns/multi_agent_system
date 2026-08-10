@@ -124,6 +124,12 @@ resource "aws_iam_role_policy" "subagent" {
         Effect   = "Allow"
         Action   = "s3:GetObject"
         Resource = "${aws_s3_bucket.global_memory.arn}/*"
+      },
+      {
+        Sid      = "ReadCodexAuth"
+        Effect   = "Allow"
+        Action   = "ssm:GetParameter"
+        Resource = "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.codex_auth_ssm_parameter_name}"
       }
     ]
   })

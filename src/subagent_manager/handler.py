@@ -16,6 +16,7 @@ from botocore.exceptions import ClientError
 
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_JOB_ID_PATTERN = re.compile(r"^job_[a-z0-9]{4,12}_[0-9a-f]{8}$")
 _serializer = TypeSerializer()
 _clients: dict[str, Any] = {}
 
@@ -47,6 +48,40 @@ def _validate_id(value: Any, field_name: str) -> str:
             f"{field_name} must be 1-128 characters using letters, numbers, '.', '_', ':', or '-'"
         )
     return value
+
+
+def _task_handoff(event: dict[str, Any], agent_id: str) -> dict[str, str] | None:
+    """Validate a real-job task handoff, or return None for legacy stress calls."""
+    supplied = {
+        "job_id": event.get("job_id"),
+        "task_s3_uri": event.get("task_s3_uri"),
+        "model": event.get("model"),
+    }
+    if all(value is None for value in supplied.values()):
+        return None
+    if any(not isinstance(value, str) or not value for value in supplied.values()):
+        raise ValueError("job_id, task_s3_uri, and model must all be supplied for a real task")
+
+    job_id = supplied["job_id"]
+    if not _JOB_ID_PATTERN.fullmatch(job_id):
+        raise ValueError("job_id has an unexpected format")
+
+    model = os.environ["SUBAGENT_MODEL"]
+    if supplied["model"] != model:
+        raise ValueError("model does not match the configured subagent model")
+
+    workspace_bucket = os.environ["AGENT_WORKSPACE_BUCKET_NAME"]
+    task_s3_key = f"jobs/{job_id}/agents/{agent_id}/input.json"
+    expected_uri = f"s3://{workspace_bucket}/{task_s3_key}"
+    if supplied["task_s3_uri"] != expected_uri:
+        raise ValueError("task_s3_uri does not match the trusted job and agent identity")
+
+    return {
+        "job_id": job_id,
+        "task_s3_uri": expected_uri,
+        "task_s3_key": task_s3_key,
+        "model": model,
+    }
 
 
 def _agent_key(orchestrator_id: str, agent_id: str) -> dict[str, str]:
@@ -87,7 +122,12 @@ def _existing_agent(orchestrator_id: str, agent_id: str) -> dict[str, Any] | Non
     return result.get("Item")
 
 
-def _reserve_slot(orchestrator_id: str, agent_id: str, created_at: str) -> bool:
+def _reserve_slot(
+    orchestrator_id: str,
+    agent_id: str,
+    created_at: str,
+    handoff: dict[str, str] | None = None,
+) -> bool:
     table_name = os.environ["STATE_TABLE_NAME"]
     limit = int(os.environ.get("MAX_ACTIVE_SUBAGENTS", "8"))
     agent = {
@@ -101,6 +141,12 @@ def _reserve_slot(orchestrator_id: str, agent_id: str, created_at: str) -> bool:
         "state": "PROVISIONING",
         "created_at": created_at,
     }
+    if handoff:
+        agent.update(
+            job_id=handoff["job_id"],
+            task_s3_uri=handoff["task_s3_uri"],
+            model=handoff["model"],
+        )
     counter_key = _counter_key(orchestrator_id)
 
     try:
@@ -211,8 +257,16 @@ def _mark_launch_unknown(
     )
 
 
-def _subagent_user_data(agent_id: str, ttl_seconds: int) -> str:
-    return f"""#!/bin/bash
+def _subagent_user_data(
+    orchestrator_id: str,
+    agent_id: str,
+    ttl_seconds: int,
+    handoff: dict[str, str] | None,
+) -> str:
+    # Stress tests intentionally omit task metadata and retain the cheap sleeper
+    # lifecycle. Real tasks start the runtime baked into the subagent AMI.
+    if handoff is None:
+        return f"""#!/bin/bash
 set -euo pipefail
 echo "subagent_id={agent_id}" > /var/log/subagent-bootstrap.log
 echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /var/log/subagent-bootstrap.log
@@ -220,8 +274,43 @@ sleep {ttl_seconds}
 shutdown -h now
 """
 
+    return f"""#!/bin/bash
+set -euo pipefail
 
-def _launch_instance(orchestrator_id: str, agent_id: str) -> str:
+install -d -m 0755 /etc/multi-agent
+token="$(curl -fsS -X PUT \
+  -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600' \
+  http://169.254.169.254/latest/api/token)"
+instance_id="$(curl -fsS \
+  -H "X-aws-ec2-metadata-token: $token" \
+  http://169.254.169.254/latest/meta-data/instance-id)"
+
+cat > /etc/multi-agent/subagent.env <<'ENV'
+AWS_DEFAULT_REGION={os.environ.get("AWS_REGION", "us-east-1")}
+AWS_REGION={os.environ.get("AWS_REGION", "us-east-1")}
+AGENT_WORKSPACE_BUCKET_NAME={os.environ["AGENT_WORKSPACE_BUCKET_NAME"]}
+GLOBAL_MEMORY_BUCKET_NAME={os.environ["GLOBAL_MEMORY_BUCKET_NAME"]}
+CODEX_AUTH_SSM_PARAMETER_NAME={os.environ["CODEX_AUTH_SSM_PARAMETER_NAME"]}
+JOB_ID={handoff["job_id"]}
+AGENT_ID={agent_id}
+ORCHESTRATOR_INSTANCE_ID={orchestrator_id}
+SUBAGENT_MODEL={handoff["model"]}
+TASK_S3_KEY={handoff["task_s3_key"]}
+SUBAGENT_TTL_SECONDS={ttl_seconds}
+ENV
+echo "SUBAGENT_INSTANCE_ID=$instance_id" >> /etc/multi-agent/subagent.env
+chown root:multi-agent /etc/multi-agent/subagent.env
+chmod 0640 /etc/multi-agent/subagent.env
+
+systemctl start --no-block multi-agent-subagent.service
+"""
+
+
+def _launch_instance(
+    orchestrator_id: str,
+    agent_id: str,
+    handoff: dict[str, str] | None = None,
+) -> str:
     ttl_seconds = int(os.environ.get("SUBAGENT_TTL_SECONDS", "1800"))
     response = _client("ec2").run_instances(
         ImageId=os.environ["SUBAGENT_AMI_ID"],
@@ -239,7 +328,7 @@ def _launch_instance(orchestrator_id: str, agent_id: str) -> str:
             }
         ],
         InstanceInitiatedShutdownBehavior="terminate",
-        UserData=_subagent_user_data(agent_id, ttl_seconds),
+        UserData=_subagent_user_data(orchestrator_id, agent_id, ttl_seconds, handoff),
         MetadataOptions={
             "HttpEndpoint": "enabled",
             "HttpTokens": "required",
@@ -305,6 +394,7 @@ def _spawn(event: dict[str, Any]) -> dict[str, Any]:
     try:
         orchestrator_id = _validate_id(event.get("orchestrator_id"), "orchestrator_id")
         agent_id = _validate_id(event.get("request_id") or str(uuid.uuid4()), "request_id")
+        handoff = _task_handoff(event, agent_id)
     except ValueError as error:
         return _response(400, accepted=False, error=str(error))
 
@@ -321,7 +411,7 @@ def _spawn(event: dict[str, Any]) -> dict[str, Any]:
         )
 
     created_at = _now()
-    if not _reserve_slot(orchestrator_id, agent_id, created_at):
+    if not _reserve_slot(orchestrator_id, agent_id, created_at, handoff):
         existing = _existing_agent(orchestrator_id, agent_id)
         if existing:
             return _response(
@@ -342,7 +432,7 @@ def _spawn(event: dict[str, Any]) -> dict[str, Any]:
         )
 
     try:
-        instance_id = _launch_instance(orchestrator_id, agent_id)
+        instance_id = _launch_instance(orchestrator_id, agent_id, handoff)
     except ClientError as error:
         failed_at = _now()
         _release_failed_launch(orchestrator_id, agent_id, failed_at, str(error))
@@ -407,6 +497,12 @@ def _spawn(event: dict[str, Any]) -> dict[str, Any]:
         "created_at": created_at,
         "launched_at": launched_at,
     }
+    if handoff:
+        record.update(
+            job_id=handoff["job_id"],
+            task_s3_uri=handoff["task_s3_uri"],
+            model=handoff["model"],
+        )
     _audit("created", record)
     return _response(
         201,

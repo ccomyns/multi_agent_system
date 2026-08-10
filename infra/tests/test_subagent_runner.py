@@ -1,0 +1,148 @@
+from __future__ import annotations
+
+import importlib.util
+import io
+import json
+import sys
+import tempfile
+import types
+import unittest
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+sys.dont_write_bytecode = True
+
+if "boto3" not in sys.modules:
+    boto3_stub = types.ModuleType("boto3")
+    boto3_stub.client = Mock()
+    sys.modules["boto3"] = boto3_stub
+
+runner_path = (
+    Path(__file__).resolve().parents[1]
+    / "runtime"
+    / "subagent"
+    / "bin"
+    / "subagent_runner.py"
+)
+runner_spec = importlib.util.spec_from_file_location("subagent_runner", runner_path)
+assert runner_spec and runner_spec.loader
+runner_module = importlib.util.module_from_spec(runner_spec)
+sys.modules[runner_spec.name] = runner_module
+runner_spec.loader.exec_module(runner_module)
+SubagentRun = runner_module.SubagentRun
+
+
+class SubagentRunnerTests(unittest.TestCase):
+    def make_run(self, root: Path) -> SubagentRun:
+        run = SubagentRun.__new__(SubagentRun)
+        run.region = "us-east-1"
+        run.workspace_bucket = "agent-workspace-bucket"
+        run.global_memory_bucket = "global-memory-bucket"
+        run.auth_parameter = "/project/codex/auth-json"
+        run.job_id = "job_abc1_1234abcd"
+        run.agent_id = "agent-0123456789abcdef01234567"
+        run.orchestrator_instance_id = "i-1234567890abcdef0"
+        run.subagent_instance_id = "i-abcdef01234567890"
+        run.model = "gpt-5.6-luna"
+        run.agent_prefix = f"jobs/{run.job_id}/agents/{run.agent_id}"
+        run.task_s3_key = f"{run.agent_prefix}/input.json"
+        run.work_dir = root / "work"
+        run.summary_dir = root / "summary"
+        run.result_dir = root / "result"
+        run.summary_file = run.summary_dir / "summary.md"
+        run.result_file = run.result_dir / "result.md"
+        run.codex_home = root / "codex-home"
+        run.s3 = Mock()
+        run.ssm = Mock()
+        run.prepare_directories()
+        return run
+
+    def task_spec(self, run: SubagentRun) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "job_id": run.job_id,
+            "orchestrator_instance_id": run.orchestrator_instance_id,
+            "agent_id": run.agent_id,
+            "model": run.model,
+            "task": "Investigate revenue quality.",
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+
+    def test_download_task_validates_identity_and_keeps_input_in_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            task = self.task_spec(run)
+            encoded = json.dumps(task).encode("utf-8")
+            run.s3.get_object.return_value = {"Body": io.BytesIO(encoded)}
+
+            loaded = run.download_task()
+
+            self.assertEqual(loaded["task"], "Investigate revenue quality.")
+            self.assertEqual((run.work_dir / "input.json").read_bytes(), encoded)
+            run.s3.get_object.assert_called_once_with(
+                Bucket=run.workspace_bucket,
+                Key=run.task_s3_key,
+            )
+
+    def test_download_task_rejects_mismatched_agent_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            task = self.task_spec(run)
+            task["agent_id"] = "agent-ffffffffffffffffffffffff"
+            run.s3.get_object.return_value = {
+                "Body": io.BytesIO(json.dumps(task).encode("utf-8"))
+            }
+
+            with self.assertRaisesRegex(RuntimeError, "agent_id does not match"):
+                run.download_task()
+
+    def test_codex_is_noninteractive_and_confined_to_three_output_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+
+            def complete_codex(command, **kwargs):
+                run.summary_file.write_text("Work summary", encoding="utf-8")
+                run.result_file.write_text("Final result", encoding="utf-8")
+                return Mock(returncode=0)
+
+            with patch.object(
+                runner_module.subprocess,
+                "run",
+                side_effect=complete_codex,
+            ) as call:
+                run.run_codex("Investigate revenue quality.")
+
+            command = call.call_args.args[0]
+            self.assertEqual(command[command.index("--ask-for-approval") + 1], "never")
+            self.assertEqual(command[command.index("--sandbox") + 1], "workspace-write")
+            self.assertEqual(command[command.index("--cd") + 1], str(run.work_dir))
+            self.assertNotIn("danger-full-access", command)
+            self.assertEqual(call.call_args.kwargs["env"]["CODEX_HOME"], str(run.codex_home))
+            self.assertEqual(
+                call.call_args.kwargs["env"]["TMPDIR"],
+                str(run.work_dir / "tmp"),
+            )
+
+            config = (run.codex_home / "config.toml").read_text(encoding="utf-8")
+            self.assertIn('approval_policy = "never"', config)
+            self.assertIn('writable_roots = ["/summary", "/result"]', config)
+            self.assertIn("network_access = true", config)
+            self.assertIn("exclude_slash_tmp = true", config)
+
+    def test_summary_upload_precedes_result_and_completion_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            run.summary_file.write_text("Work summary", encoding="utf-8")
+            run.result_file.write_text("Final result", encoding="utf-8")
+
+            outputs = run.upload_outputs()
+            run.upload_status("completed", **outputs)
+
+            calls = run.s3.put_object.call_args_list
+            self.assertEqual(calls[0].kwargs["Key"], f"{run.agent_prefix}/summary/summary.md")
+            self.assertEqual(calls[1].kwargs["Key"], f"{run.agent_prefix}/result/result.md")
+            self.assertEqual(calls[2].kwargs["Key"], f"{run.agent_prefix}/status/completed.json")
+
+
+if __name__ == "__main__":
+    unittest.main()

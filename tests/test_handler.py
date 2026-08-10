@@ -15,8 +15,10 @@ class SpawnTests(unittest.TestCase):
             os.environ,
             {
                 "AUDIT_BUCKET_NAME": "audit-bucket",
+                "AGENT_WORKSPACE_BUCKET_NAME": "agent-workspace-bucket",
                 "MAX_ACTIVE_SUBAGENTS": "8",
                 "STATE_TABLE_NAME": "state-table",
+                "SUBAGENT_MODEL": "gpt-5.6-luna",
             },
             clear=False,
         )
@@ -34,7 +36,7 @@ class SpawnTests(unittest.TestCase):
         def existing(orchestrator_id: str, agent_id: str):
             return records.get((orchestrator_id, agent_id))
 
-        def reserve(orchestrator_id: str, agent_id: str, created_at: str) -> bool:
+        def reserve(orchestrator_id: str, agent_id: str, created_at: str, handoff=None) -> bool:
             nonlocal active_count
             if active_count >= 8:
                 return False
@@ -58,7 +60,7 @@ class SpawnTests(unittest.TestCase):
             patch.object(
                 handler,
                 "_launch_instance",
-                side_effect=lambda _, agent_id: f"i-{agent_id[-4:]}",
+                side_effect=lambda _, agent_id, handoff=None: f"i-{agent_id[-4:]}",
             ),
             patch.object(handler, "_mark_launched", side_effect=mark),
             patch.object(handler, "_active_count", side_effect=lambda _: active_count),
@@ -132,6 +134,68 @@ class SpawnTests(unittest.TestCase):
         self.assertEqual(launch["InstanceType"], "t3.large")
         self.assertIn("sleep 1800", launch["UserData"])
         self.assertNotIn("BlockDeviceMappings", launch)
+
+    def test_real_task_launch_passes_only_trusted_s3_handoff_to_runner(self) -> None:
+        ec2 = Mock()
+        ec2.run_instances.return_value = {"Instances": [{"InstanceId": "i-subagent"}]}
+        handoff = {
+            "job_id": "job_abc1_1234abcd",
+            "task_s3_uri": (
+                "s3://agent-workspace-bucket/jobs/job_abc1_1234abcd/"
+                "agents/agent-0123456789abcdef01234567/input.json"
+            ),
+            "task_s3_key": (
+                "jobs/job_abc1_1234abcd/agents/"
+                "agent-0123456789abcdef01234567/input.json"
+            ),
+            "model": "gpt-5.6-luna",
+        }
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "AWS_REGION": "us-east-1",
+                    "AGENT_WORKSPACE_BUCKET_NAME": "agent-workspace-bucket",
+                    "GLOBAL_MEMORY_BUCKET_NAME": "global-memory-bucket",
+                    "CODEX_AUTH_SSM_PARAMETER_NAME": "/project/codex/auth-json",
+                    "SUBAGENT_AMI_ID": "ami-browser-tools",
+                    "SUBAGENT_INSTANCE_PROFILE_NAME": "subagent-profile",
+                    "SUBAGENT_INSTANCE_TYPE": "t3.large",
+                    "SUBAGENT_SECURITY_GROUP_ID": "sg-subagents",
+                    "SUBAGENT_SUBNET_ID": "subnet-public",
+                    "SUBAGENT_TTL_SECONDS": "1800",
+                },
+            ),
+            patch.object(handler, "_client", return_value=ec2),
+        ):
+            handler._launch_instance(
+                "i-1234567890abcdef0",
+                "agent-0123456789abcdef01234567",
+                handoff,
+            )
+
+        user_data = ec2.run_instances.call_args.kwargs["UserData"]
+        self.assertIn("TASK_S3_KEY=" + handoff["task_s3_key"], user_data)
+        self.assertIn("systemctl start --no-block multi-agent-subagent.service", user_data)
+        self.assertNotIn("Investigate revenue quality", user_data)
+        self.assertNotIn("sleep 1800", user_data)
+
+    def test_task_handoff_rejects_an_untrusted_s3_uri(self) -> None:
+        result = handler.lambda_handler(
+            {
+                "action": "spawn",
+                "orchestrator_id": "i-1234567890abcdef0",
+                "request_id": "agent-0123456789abcdef01234567",
+                "job_id": "job_abc1_1234abcd",
+                "task_s3_uri": "s3://another-bucket/arbitrary-input.json",
+                "model": "gpt-5.6-luna",
+            },
+            None,
+        )
+
+        self.assertEqual(result["statusCode"], 400)
+        self.assertFalse(result["body"]["accepted"])
+        self.assertIn("trusted job and agent identity", result["body"]["error"])
 
     def test_repeated_request_id_is_idempotent(self) -> None:
         existing = {

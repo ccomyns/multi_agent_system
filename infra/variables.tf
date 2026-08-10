@@ -72,9 +72,9 @@ variable "spawn_agent_mcp_command" {
 }
 
 variable "subagent_ttl_seconds" {
-  description = "Seconds before a subagent shuts down and terminates itself."
+  description = "Hard runtime limit before a stuck subagent is shut down and terminated. Successful subagents terminate as soon as their outputs are uploaded."
   type        = number
-  default     = 180
+  default     = 1800
 
   validation {
     condition     = var.subagent_ttl_seconds >= 180 && var.subagent_ttl_seconds <= 86400
@@ -83,13 +83,24 @@ variable "subagent_ttl_seconds" {
 }
 
 variable "agent_image_version" {
-  description = "Semantic version assigned to the Image Builder components and recipes. Increment this to rebuild both AMIs with current software."
+  description = "Semantic version assigned to shared Image Builder components and the subagent recipe. Increment this to rebuild the subagent AMI and shared tools."
   type        = string
-  default     = "1.0.0"
+  default     = "1.0.1"
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.agent_image_version))
     error_message = "agent_image_version must be a semantic version such as 1.0.0."
+  }
+}
+
+variable "orchestrator_image_version" {
+  description = "Semantic version assigned to the orchestrator runtime component and image recipe. Increment this to rebuild only the orchestrator AMI."
+  type        = string
+  default     = "1.0.1"
+
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.orchestrator_image_version))
+    error_message = "orchestrator_image_version must be a semantic version such as 1.0.1."
   }
 }
 

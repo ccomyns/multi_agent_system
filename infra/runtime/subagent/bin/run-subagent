@@ -1,0 +1,9 @@
+#!/bin/bash
+set -euo pipefail
+
+# The runner normally exits as soon as its result has been uploaded. The timeout
+# is a billing and failure-containment backstop for a hung Codex process.
+exec /usr/bin/timeout --signal=TERM --kill-after=60s \
+  "${SUBAGENT_TTL_SECONDS}s" \
+  /opt/multi-agent/venv/bin/python \
+  /opt/multi-agent/runtime/bin/subagent_runner.py

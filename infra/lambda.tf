@@ -24,7 +24,10 @@ resource "aws_lambda_function" "subagent_manager" {
 
   environment {
     variables = {
+      AGENT_WORKSPACE_BUCKET_NAME    = aws_s3_bucket.agent_workspace.id
       AUDIT_BUCKET_NAME              = aws_s3_bucket.audit.id
+      CODEX_AUTH_SSM_PARAMETER_NAME  = local.codex_auth_ssm_parameter_name
+      GLOBAL_MEMORY_BUCKET_NAME      = aws_s3_bucket.global_memory.id
       MAX_ACTIVE_SUBAGENTS           = tostring(var.max_active_subagents)
       STATE_TABLE_NAME               = aws_dynamodb_table.state.name
       SUBAGENT_AMI_ID                = local.subagent_ami_id
@@ -33,6 +36,7 @@ resource "aws_lambda_function" "subagent_manager" {
       SUBAGENT_SECURITY_GROUP_ID     = aws_security_group.instances.id
       SUBAGENT_SUBNET_ID             = aws_subnet.public.id
       SUBAGENT_TTL_SECONDS           = tostring(var.subagent_ttl_seconds)
+      SUBAGENT_MODEL                 = var.subagent_model
     }
   }
 
