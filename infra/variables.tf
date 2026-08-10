@@ -96,7 +96,7 @@ variable "agent_image_version" {
 variable "orchestrator_image_version" {
   description = "Semantic version assigned to the orchestrator runtime component and image recipe. Increment this to rebuild only the orchestrator AMI."
   type        = string
-  default     = "1.0.2"
+  default     = "1.0.3"
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.orchestrator_image_version))

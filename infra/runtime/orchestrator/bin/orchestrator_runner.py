@@ -20,6 +20,8 @@ from botocore.exceptions import ClientError
 
 LOG = logging.getLogger("orchestrator-runner")
 JOB_ID_PATTERN = re.compile(r"^job_[a-z0-9]{4,12}_[0-9a-f]{8}$")
+MAX_TEXT_OUTPUT_BYTES = 1024 * 1024
+MAX_FINAL_RESULT_BYTES = 512 * 1024 * 1024
 
 
 def required_env(name: str) -> str:
@@ -32,6 +34,27 @@ def required_env(name: str) -> str:
 def toml_string(value: str) -> str:
     # JSON strings use the same quoting and escaping needed by TOML basic strings.
     return json.dumps(value, ensure_ascii=False)
+
+
+def reject_nonstandard_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant {value!r} is not allowed")
+
+
+def read_utf8(path: Path, size_limit: int, label: str) -> str:
+    if not path.is_file():
+        raise RuntimeError(f"Codex completed without writing {label}")
+    size = path.stat().st_size
+    if size == 0:
+        raise RuntimeError(f"{label} must not be empty")
+    if size > size_limit:
+        raise RuntimeError(f"{label} exceeds the {size_limit}-byte publication limit")
+    try:
+        value = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        raise RuntimeError(f"{label} must contain valid UTF-8") from error
+    if not value.strip():
+        raise RuntimeError(f"{label} must not be blank")
+    return value
 
 
 class OrchestratorRun:
@@ -55,7 +78,9 @@ class OrchestratorRun:
         self.workspace = Path("/var/lib/multi-agent/jobs") / self.job_id
         # Keep account credentials outside the model-writable job workspace.
         self.codex_home = Path("/var/lib/multi-agent/codex-home")
+        self.plan_file = self.workspace / "plan.md"
         self.final_message = self.workspace / "final.md"
+        self.final_result = self.workspace / "final_result.json"
 
         self.ddb = boto3.client("dynamodb", region_name=self.region)
         self.s3 = boto3.client("s3", region_name=self.region)
@@ -185,7 +210,11 @@ approval_mode = "approve"
             "GLOBAL_MEMORY_BUCKET_NAME environment variable identifies durable "
             "cross-job memory. Read relevant memory during planning. Global memory "
             "is read-only for this orchestrator and all subagents; do not attempt to "
-            "create, update, or delete objects there."
+            "create, update, or delete objects there. Before finishing, create "
+            "final_result.json in the orchestrator workspace containing all aggregated "
+            "data needed to answer the task. Choose the JSON structure that best represents "
+            "the research and the subagent datasets; do not omit relevant collected data. "
+            "The file must be valid JSON containing an object or array."
         )
         self.write_codex_config(developer_instructions)
 
@@ -213,19 +242,53 @@ approval_mode = "approve"
         LOG.info("starting Codex for job %s with model %s", self.job_id, self.orchestrator_model)
         subprocess.run(command, env=environment, check=True)
 
-        if not self.final_message.is_file() or self.final_message.stat().st_size == 0:
-            raise RuntimeError("Codex completed without writing a final message")
+        read_utf8(self.plan_file, MAX_TEXT_OUTPUT_BYTES, "plan.md")
+        read_utf8(self.final_message, MAX_TEXT_OUTPUT_BYTES, "final.md")
+        self.validate_final_result()
 
-    def upload_result(self) -> str:
-        key = f"jobs/{self.job_id}/result/final.md"
-        self.s3.put_object(
-            Bucket=self.workspace_bucket,
-            Key=key,
-            Body=self.final_message.read_bytes(),
-            ContentType="text/markdown; charset=utf-8",
-            ServerSideEncryption="AES256",
+    def validate_final_result(self) -> Any:
+        raw = read_utf8(
+            self.final_result,
+            MAX_FINAL_RESULT_BYTES,
+            "final_result.json",
         )
-        return f"s3://{self.workspace_bucket}/{key}"
+        try:
+            draft = json.loads(raw, parse_constant=reject_nonstandard_json_constant)
+        except ValueError as error:
+            raise RuntimeError("final_result.json must contain valid JSON") from error
+        if not isinstance(draft, (dict, list)):
+            raise RuntimeError("final_result.json must contain a JSON object or array")
+        return draft
+
+    def upload_outputs(self) -> dict[str, str]:
+        destinations = {
+            "plan_uri": (
+                self.plan_file,
+                f"jobs/{self.job_id}/result/plan.md",
+                "text/markdown; charset=utf-8",
+            ),
+            "final_result_uri": (
+                self.final_result,
+                f"jobs/{self.job_id}/result/final_result.json",
+                "application/json",
+            ),
+            "final_uri": (
+                self.final_message,
+                f"jobs/{self.job_id}/result/final.md",
+                "text/markdown; charset=utf-8",
+            ),
+        }
+        uploaded: dict[str, str] = {}
+        for name, (source, key, content_type) in destinations.items():
+            self.s3.put_object(
+                Bucket=self.workspace_bucket,
+                Key=key,
+                Body=source.read_bytes(),
+                ContentType=content_type,
+                ServerSideEncryption="AES256",
+            )
+            uploaded[name] = f"s3://{self.workspace_bucket}/{key}"
+        return uploaded
 
     def finish_job(self, status: str) -> None:
         finished_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -295,9 +358,9 @@ def main() -> int:
         task = run.load_task()
         run.install_auth()
         run.run_codex(task)
-        result_uri = run.upload_result()
+        output_uris = run.upload_outputs()
         run.finish_job("completed")
-        LOG.info("completed job %s; result=%s", run.job_id, result_uri)
+        LOG.info("completed job %s; outputs=%s", run.job_id, output_uris)
         return 0
     except Exception as error:
         LOG.exception("orchestrator job failed")

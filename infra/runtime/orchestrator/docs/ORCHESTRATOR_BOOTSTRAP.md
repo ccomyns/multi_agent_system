@@ -53,8 +53,10 @@ The runner:
    job workspace as `documentation/`.
 5. Runs the original task with `gpt-5.6-terra`, a workspace-write sandbox, no
    interactive approvals, and live native search via `codex --search exec`.
-6. Uploads the final response to
-   `s3://<agent-workspace>/jobs/<job_id>/result/final.md`.
+6. Validates and uploads the durable job outputs:
+   - `s3://<agent-workspace>/jobs/<job_id>/result/plan.md`
+   - `s3://<agent-workspace>/jobs/<job_id>/result/final_result.json`
+   - `s3://<agent-workspace>/jobs/<job_id>/result/final.md`
 7. Atomically marks the job completed or failed and releases `ACTIVE_JOB`.
 8. Shuts down; the launch template converts shutdown into EC2 termination.
 
@@ -73,6 +75,15 @@ by the orchestrator's `--model` flag.
 Orchestrators and subagents write research output only to the current job's
 workspace. A separate trusted ingestion or curation workflow is responsible
 for adding data to global memory.
+
+## Final result
+
+The orchestrator chooses the structure of `final_result.json` based on the
+research task and the data returned by its subagents. The runner does not impose
+a domain-independent schema or rewrite the result. It only requires a non-empty,
+valid JSON object or array within the publication size limit. A missing or
+malformed plan or final result fails the job instead of publishing an incomplete
+success.
 
 ## Local subagent-manager MCP server
 

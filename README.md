@@ -63,6 +63,12 @@ downloading them, then downloads only the summary and JSON dataset. The
 30-minute TTL is a hard backstop for hung runs, not the normal completion
 mechanism.
 
+Before a successful orchestrator shuts down, it uploads three durable outputs
+under `jobs/<job_id>/result/`: `plan.md`, the narrative `final.md`, and a
+structured `final_result.json`. The orchestrator chooses the JSON structure that
+best fits the task and its collected subagent data; the runner only validates
+that the file is a non-empty JSON object or array before publication.
+
 Jobs live in a second table, `<project>-jobs`, which holds two kinds of items:
 one job record per run (`pk = JOB#<job_id>`) and a single lock item
 (`pk = ACTIVE_JOB`). The lock's `active_job_id` references the active job
@@ -218,8 +224,8 @@ are separate so one can be rebuilt without unnecessarily rebuilding the other.
 The current versions are:
 
 ```hcl
-orchestrator_image_version = "1.0.1"
-agent_image_version        = "1.0.1"
+orchestrator_image_version = "1.0.3"
+agent_image_version        = "1.0.2"
 ```
 
 Increment `orchestrator_image_version` for orchestrator runtime or recipe

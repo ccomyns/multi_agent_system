@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import tempfile
 import types
@@ -53,7 +54,11 @@ class OrchestratorRunnerTests(unittest.TestCase):
         run.subagent_model = "gpt-5.6-luna"
         run.workspace = root / "workspace"
         run.codex_home = run.workspace / ".codex"
+        run.plan_file = run.workspace / "plan.md"
         run.final_message = run.workspace / "final.md"
+        run.final_result = run.workspace / "final_result.json"
+        run.workspace_bucket = "agent-workspace-bucket"
+        run.s3 = Mock()
         run.mcp_command = root / "spawn-agent-mcp"
         run.documentation_dir = root / "documentation"
         run.documentation_dir.mkdir()
@@ -64,13 +69,26 @@ class OrchestratorRunnerTests(unittest.TestCase):
         run.mcp_command.chmod(0o755)
         return run
 
+    def write_codex_outputs(self, run: OrchestratorRun) -> None:
+        run.plan_file.write_text("# Research plan\n", encoding="utf-8")
+        run.final_message.write_text("Research result", encoding="utf-8")
+        run.final_result.write_text(
+            json.dumps(
+                {
+                    "companies": [{"name": "Example Corp", "value": 42}],
+                    "notes": "Structure chosen for this research task",
+                }
+            ),
+            encoding="utf-8",
+        )
+
     def test_codex_exec_receives_task_search_model_and_writable_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run = self.make_run(Path(temporary))
             task = "Compare two public companies."
 
             def complete_codex(command, **kwargs):
-                run.final_message.write_text("Research result", encoding="utf-8")
+                self.write_codex_outputs(run)
                 return Mock(returncode=0)
 
             with patch.object(runner_module.subprocess, "run", side_effect=complete_codex) as call:
@@ -90,6 +108,8 @@ class OrchestratorRunnerTests(unittest.TestCase):
             config = (run.codex_home / "config.toml").read_text(encoding="utf-8")
             self.assertIn("You have been given the following task", config)
             self.assertIn("create a plan.md file", config)
+            self.assertIn("create final_result.json", config)
+            self.assertIn("Choose the JSON structure", config)
             self.assertIn("[mcp_servers.subagent_manager.tools.spawn_agent]", config)
             self.assertIn(
                 "[mcp_servers.subagent_manager.tools.collect_agent_results]",
@@ -111,6 +131,44 @@ class OrchestratorRunnerTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "spawn_agent MCP executable is missing"):
                     run.run_codex("Investigate a market.")
             call.assert_not_called()
+
+    def test_invalid_final_result_json_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+
+            def complete_codex(command, **kwargs):
+                self.write_codex_outputs(run)
+                run.final_result.write_text(
+                    "not-json",
+                    encoding="utf-8",
+                )
+                return Mock(returncode=0)
+
+            with patch.object(runner_module.subprocess, "run", side_effect=complete_codex):
+                with self.assertRaisesRegex(RuntimeError, "valid JSON"):
+                    run.run_codex("Investigate a market.")
+
+    def test_upload_outputs_publishes_plan_json_and_final_message(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            run.workspace.mkdir()
+            self.write_codex_outputs(run)
+
+            uploaded = run.upload_outputs()
+
+            keys = [call.kwargs["Key"] for call in run.s3.put_object.call_args_list]
+            self.assertEqual(
+                keys,
+                [
+                    f"jobs/{run.job_id}/result/plan.md",
+                    f"jobs/{run.job_id}/result/final_result.json",
+                    f"jobs/{run.job_id}/result/final.md",
+                ],
+            )
+            self.assertTrue(uploaded["plan_uri"].endswith("/result/plan.md"))
+            self.assertTrue(
+                uploaded["final_result_uri"].endswith("/result/final_result.json")
+            )
 
     def test_refreshed_auth_does_not_overwrite_a_manual_rotation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
