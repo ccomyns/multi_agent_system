@@ -14,7 +14,9 @@ Records:
 - `pk = ACTIVE_JOB`: the singleton lock that enforces at most one active
   multi-agent research job.
 - `pk = JOB#<job_id>`: the user request and top-level orchestrator lifecycle,
-  including status, the orchestrator EC2 instance ID, and timestamps.
+  including `type_of_job`, status, the orchestrator EC2 instance ID, and
+  timestamps. New records currently use `type_of_job = data_mining`; readers
+  treat older records without the attribute as data-mining jobs.
 
 The admin server creates the job record and lock together. The real
 orchestrator reads its job record and eventually completes or fails it while

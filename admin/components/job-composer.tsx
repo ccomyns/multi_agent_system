@@ -4,10 +4,13 @@ import { ArrowUp, Bot, Database, Sparkles, Square } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { StatusBadge } from "@/components/status-badge";
+import { DEFAULT_JOB_TYPE, jobTypeLabel } from "@/lib/jobs";
+import type { JobType } from "@/lib/jobs";
 import { useJobs } from "@/lib/use-jobs";
 
 export function JobComposer() {
   const [query, setQuery] = useState("");
+  const [jobType, setJobType] = useState<JobType>(DEFAULT_JOB_TYPE);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { activeJob: job, hydrated, pending, error, launch, end } = useJobs();
 
@@ -17,7 +20,7 @@ export function JobComposer() {
       return;
     }
 
-    if (await launch(originalTask)) {
+    if (await launch(originalTask, jobType)) {
       setQuery("");
     }
   }
@@ -61,6 +64,10 @@ export function JobComposer() {
 
               <dl className="job-record-facts">
                 <div>
+                  <dt>Job type</dt>
+                  <dd>{jobTypeLabel(job.typeOfJob)}</dd>
+                </div>
+                <div>
                   <dt>Orchestrator instance</dt>
                   <dd className="mono">{job.orchestratorInstanceId ?? "null"}</dd>
                 </div>
@@ -87,57 +94,73 @@ export function JobComposer() {
       ) : null}
 
       <form
-        className="job-prompt-form"
+        className="job-compose-form"
         onSubmit={(event) => {
           event.preventDefault();
           void submitJob();
         }}
       >
-        <label className="sr-only" htmlFor="job-prompt">
-          Research request
-        </label>
-        <textarea
-          ref={textareaRef}
-          id="job-prompt"
-          data-testid="job-prompt"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void submitJob();
+        <div className="job-prompt-form">
+          <label className="sr-only" htmlFor="job-prompt">
+            Research request
+          </label>
+          <textarea
+            ref={textareaRef}
+            id="job-prompt"
+            data-testid="job-prompt"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void submitJob();
+              }
+            }}
+            placeholder={
+              job
+                ? "This job is active. Only one job can run at a time."
+                : "Describe the research job you want to run…"
             }
-          }}
-          placeholder={
-            job
-              ? "This job is active. Only one job can run at a time."
-              : "Describe the research job you want to run…"
-          }
-          disabled={!hydrated || Boolean(job) || pending}
-          maxLength={4000}
-          rows={3}
-        />
-        <div className="job-prompt-footer">
-          <span>
-            {job ? (
-              <>
-                <Database size={13} aria-hidden="true" /> Job record holds the active-job lock
-              </>
-            ) : pending ? (
-              "Claiming the lock and launching the orchestrator…"
-            ) : (
-              "Shift + Enter for a new line"
-            )}
-          </span>
-          <button
-            type="submit"
-            className="job-send-button"
-            aria-label="Create job"
-            disabled={!hydrated || Boolean(job) || pending || !query.trim()}
-          >
-            <ArrowUp size={18} strokeWidth={2.2} aria-hidden="true" />
-          </button>
+            disabled={!hydrated || Boolean(job) || pending}
+            maxLength={4000}
+            rows={3}
+          />
+          <div className="job-prompt-footer">
+            <span>
+              {job ? (
+                <>
+                  <Database size={13} aria-hidden="true" /> Job record holds the active-job lock
+                </>
+              ) : pending ? (
+                "Claiming the lock and launching the orchestrator…"
+              ) : (
+                "Shift + Enter for a new line"
+              )}
+            </span>
+            <button
+              type="submit"
+              className="job-send-button"
+              aria-label="Create job"
+              disabled={!hydrated || Boolean(job) || pending || !query.trim()}
+            >
+              <ArrowUp size={18} strokeWidth={2.2} aria-hidden="true" />
+            </button>
+          </div>
         </div>
+        <fieldset className="job-type-selector" disabled={!hydrated || Boolean(job) || pending}>
+          <legend>Job type</legend>
+          <button
+            type="button"
+            className={
+              jobType === "data_mining" ? "job-type-button is-selected" : "job-type-button"
+            }
+            aria-pressed={jobType === "data_mining"}
+            onClick={() => setJobType("data_mining")}
+          >
+            <Database size={14} aria-hidden="true" />
+            Data Mining
+          </button>
+        </fieldset>
       </form>
     </div>
   );

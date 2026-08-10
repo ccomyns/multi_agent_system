@@ -3,6 +3,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 
 import type { JobsSnapshot } from "@/lib/jobs";
+import type { JobType } from "@/lib/jobs";
 import { fetchJobs, isActiveJob, requestJobEnd, requestJobLaunch } from "@/lib/jobs";
 
 const ACTIVE_POLL_INTERVAL_MS = 8000;
@@ -60,10 +61,10 @@ export function refreshJobs() {
   return inFlightRefresh;
 }
 
-export async function launchJob(originalTask: string) {
+export async function launchJob(originalTask: string, typeOfJob: JobType) {
   updateStore({ pending: true, error: null });
   try {
-    await requestJobLaunch(originalTask);
+    await requestJobLaunch(originalTask, typeOfJob);
     return true;
   } catch (caught) {
     updateStore({ error: describeError(caught, "The job could not be launched.") });

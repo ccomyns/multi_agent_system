@@ -14,8 +14,8 @@ import {
 import { NextResponse } from "next/server";
 
 import { awsClientOptions } from "@/lib/aws";
-import type { Job, JobStatus, JobsSnapshot } from "@/lib/jobs";
-import { JOB_ID_PATTERN } from "@/lib/jobs";
+import type { Job, JobStatus, JobType, JobsSnapshot } from "@/lib/jobs";
+import { DEFAULT_JOB_TYPE, isJobType, JOB_ID_PATTERN } from "@/lib/jobs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,12 +28,14 @@ const JOB_HISTORY_LIMIT = 50;
 type LaunchJobRequest = {
   jobId?: unknown;
   originalTask?: unknown;
+  typeOfJob?: unknown;
 };
 
 type JobItem = {
   pk?: unknown;
   job_id?: unknown;
   original_task?: unknown;
+  type_of_job?: unknown;
   status?: unknown;
   created_at?: unknown;
   updated_at?: unknown;
@@ -103,6 +105,8 @@ function toJob(item: Record<string, unknown> | undefined): Job | null {
   return {
     jobId: record.job_id,
     originalTask: record.original_task,
+    // Records created before job types were introduced are data-mining jobs.
+    typeOfJob: isJobType(record.type_of_job) ? record.type_of_job : DEFAULT_JOB_TYPE,
     status: record.status,
     createdAt: record.created_at,
     updatedAt: typeof record.updated_at === "string" ? record.updated_at : record.created_at,
@@ -225,6 +229,11 @@ export async function POST(request: Request) {
 
   const jobId = input.jobId;
   const originalTask = input.originalTask.trim();
+  const requestedJobType = input.typeOfJob ?? DEFAULT_JOB_TYPE;
+  if (!isJobType(requestedJobType)) {
+    return errorResponse("typeOfJob is not supported.", 400);
+  }
+  const typeOfJob: JobType = requestedJobType;
   const createdAt = new Date().toISOString();
   const documents = documentClient();
 
@@ -253,6 +262,7 @@ export async function POST(request: Request) {
                 pk: jobPk(jobId),
                 job_id: jobId,
                 original_task: originalTask,
+                type_of_job: typeOfJob,
                 status: "initializing",
                 created_at: createdAt,
                 updated_at: createdAt,
@@ -306,6 +316,7 @@ export async function POST(request: Request) {
               { Key: "Name", Value: `orchestrator-${jobId}` },
               { Key: "Role", Value: "orchestrator" },
               { Key: "JobId", Value: jobId },
+              { Key: "TypeOfJob", Value: typeOfJob },
             ],
           },
           {
@@ -313,6 +324,7 @@ export async function POST(request: Request) {
             Tags: [
               { Key: "Role", Value: "orchestrator" },
               { Key: "JobId", Value: jobId },
+              { Key: "TypeOfJob", Value: typeOfJob },
             ],
           },
         ],

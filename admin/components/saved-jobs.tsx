@@ -4,6 +4,7 @@ import { BriefcaseBusiness, Inbox } from "lucide-react";
 import Link from "next/link";
 
 import { StatusBadge } from "@/components/status-badge";
+import { jobTypeLabel } from "@/lib/jobs";
 import { useJobs } from "@/lib/use-jobs";
 
 export function SavedJobs() {
@@ -49,6 +50,10 @@ export function SavedJobs() {
               </div>
               <p>{job.originalTask}</p>
               <dl className="saved-job-card-facts">
+                <div>
+                  <dt>Job type</dt>
+                  <dd>{jobTypeLabel(job.typeOfJob)}</dd>
+                </div>
                 <div>
                   <dt>Orchestrator instance</dt>
                   <dd className="mono">{job.orchestratorInstanceId ?? "null"}</dd>

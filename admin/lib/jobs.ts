@@ -1,8 +1,24 @@
 export type JobStatus = "initializing" | "running" | "completed" | "failed";
+export type JobType = "data_mining";
+
+export const DEFAULT_JOB_TYPE: JobType = "data_mining";
+export const JOB_TYPES: JobType[] = [DEFAULT_JOB_TYPE];
+
+export function isJobType(value: unknown): value is JobType {
+  return JOB_TYPES.includes(value as JobType);
+}
+
+export function jobTypeLabel(type: JobType) {
+  switch (type) {
+    case "data_mining":
+      return "Data Mining";
+  }
+}
 
 export type Job = {
   jobId: string;
   originalTask: string;
+  typeOfJob: JobType;
   status: JobStatus;
   createdAt: string;
   updatedAt: string;
@@ -40,6 +56,8 @@ export function isJob(value: unknown): value is Job {
     typeof value.jobId === "string" &&
     "originalTask" in value &&
     typeof value.originalTask === "string" &&
+    "typeOfJob" in value &&
+    isJobType(value.typeOfJob) &&
     "status" in value &&
     ["initializing", "running", "completed", "failed"].includes(String(value.status)) &&
     "createdAt" in value &&
@@ -86,11 +104,11 @@ export async function fetchJobs(): Promise<JobsSnapshot> {
   return payload;
 }
 
-export async function requestJobLaunch(originalTask: string): Promise<Job> {
+export async function requestJobLaunch(originalTask: string, typeOfJob: JobType): Promise<Job> {
   const payload = await requestJobs("/api/jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jobId: createJobId(), originalTask }),
+    body: JSON.stringify({ jobId: createJobId(), originalTask, typeOfJob }),
   });
   if (!isJob(payload)) {
     throw new Error("The admin server returned an unexpected job record.");
