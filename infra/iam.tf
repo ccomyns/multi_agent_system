@@ -308,7 +308,8 @@ resource "aws_iam_user_policy" "admin_server" {
         Effect = "Allow"
         Action = [
           "dynamodb:GetItem",
-          "dynamodb:Query"
+          "dynamodb:Query",
+          "dynamodb:Scan"
         ]
         Resource = [
           aws_dynamodb_table.state.arn,
@@ -359,39 +360,24 @@ resource "aws_iam_user_policy" "admin_server" {
         }
       },
       {
-        Sid      = "ListAuditBucket"
-        Effect   = "Allow"
-        Action   = "s3:ListBucket"
-        Resource = aws_s3_bucket.audit.arn
-
-        Condition = {
-          StringLike = {
-            "s3:prefix" = "stress-tests/*"
-          }
-        }
+        Sid    = "InspectDataBuckets"
+        Effect = "Allow"
+        Action = "s3:ListBucket"
+        Resource = [
+          aws_s3_bucket.agent_workspace.arn,
+          aws_s3_bucket.audit.arn,
+          aws_s3_bucket.global_memory.arn
+        ]
       },
       {
-        Sid      = "ListAgentWorkspace"
-        Effect   = "Allow"
-        Action   = "s3:ListBucket"
-        Resource = aws_s3_bucket.agent_workspace.arn
-        Condition = {
-          StringLike = {
-            "s3:prefix" = "jobs/*"
-          }
-        }
-      },
-      {
-        Sid      = "ReadJobResults"
-        Effect   = "Allow"
-        Action   = "s3:GetObject"
-        Resource = "${aws_s3_bucket.agent_workspace.arn}/jobs/*"
-      },
-      {
-        Sid      = "ReadStressResults"
-        Effect   = "Allow"
-        Action   = "s3:GetObject"
-        Resource = "${aws_s3_bucket.audit.arn}/stress-tests/*"
+        Sid    = "InspectDataObjects"
+        Effect = "Allow"
+        Action = "s3:GetObject"
+        Resource = [
+          "${aws_s3_bucket.agent_workspace.arn}/*",
+          "${aws_s3_bucket.audit.arn}/*",
+          "${aws_s3_bucket.global_memory.arn}/*"
+        ]
       }
     ]
   })

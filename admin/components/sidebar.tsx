@@ -2,6 +2,7 @@
 
 import {
   BriefcaseBusiness,
+  Database,
   FlaskConical,
   Layers3,
   Network,
@@ -13,6 +14,7 @@ import { usePathname } from "next/navigation";
 const NAV_ITEMS = [
   { href: "/", label: "Multi Agent System", Icon: Network },
   { href: "/jobs", label: "Launch a Job", Icon: BriefcaseBusiness },
+  { href: "/database", label: "Database Management", Icon: Database },
   { href: "/slides", label: "Slide Deck Builder", Icon: Presentation },
   { href: "/testing", label: "Testing", Icon: FlaskConical },
 ] as const;

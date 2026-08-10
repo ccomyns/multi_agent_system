@@ -148,6 +148,12 @@ To launch real jobs, copy `admin/.env.example` to `admin/.env.local` and set
 from the Terraform outputs. Launching a job starts a billable `t3.large`
 orchestrator that runs until the job is ended from the console.
 
+The Database Management page provides read-only previews of all three S3
+buckets and both DynamoDB tables. Set `AGENT_WORKSPACE_BUCKET_NAME`,
+`GLOBAL_MEMORY_BUCKET_NAME`, and `STATE_TABLE_NAME` from the corresponding
+Terraform outputs; it shares the jobs table and audit bucket settings above.
+The S3 and DynamoDB previews show at most the first 100 records per resource.
+
 To run the real concurrency stress test from the Testing page, copy
 `admin/.env.example` to `admin/.env.local`, set the deployed stress-test launch
 template ID/version, audit bucket, and AWS region, then change
