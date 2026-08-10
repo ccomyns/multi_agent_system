@@ -110,6 +110,10 @@ class OrchestratorRunnerTests(unittest.TestCase):
             self.assertIn("create a plan.md file", config)
             self.assertIn("create final_result.json", config)
             self.assertIn("Choose the JSON structure", config)
+            self.assertIn("active_subagent_limit_reached", config)
+            self.assertIn("retain that rejected task", config)
+            self.assertIn("retry the rejected task until its spawn request is accepted", config)
+            self.assertIn("must never cause a planned task to be abandoned", config)
             self.assertIn("[mcp_servers.subagent_manager.tools.spawn_agent]", config)
             self.assertIn(
                 "[mcp_servers.subagent_manager.tools.collect_agent_results]",
