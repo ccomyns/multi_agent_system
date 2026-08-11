@@ -2,6 +2,7 @@
 
 import { AlertTriangle, ArrowLeft, Database, Square } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { fetchJobMonitor } from "@/lib/job-monitor";
@@ -36,6 +37,7 @@ function describeError(caught: unknown, fallback: string) {
 }
 
 export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
+  const router = useRouter();
   const [snapshot, setSnapshot] = useState<JobMonitorSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
@@ -97,6 +99,13 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
     }
   }
 
+  function viewFinalResult() {
+    if (!jobIsSaved) {
+      return;
+    }
+    router.push(`/jobs/${encodeURIComponent(jobId)}/result`);
+  }
+
   const progress = snapshot?.progress ?? "launching_orchestrator";
   const task = snapshot?.job.originalTask ?? "Loading the original task…";
   const jobType = snapshot?.job.typeOfJob ?? DEFAULT_JOB_TYPE;
@@ -122,7 +131,27 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
         {jobTypeLabel(jobType).toUpperCase()}
       </div>
 
-      <section className="data-mining-panel orchestrator-panel" aria-labelledby="orchestrator-panel-label">
+      <section
+        className={
+          jobIsSaved
+            ? "data-mining-panel orchestrator-panel is-result-viewable"
+            : "data-mining-panel orchestrator-panel"
+        }
+        aria-labelledby="orchestrator-panel-label"
+        onClick={jobIsSaved ? viewFinalResult : undefined}
+        onKeyDown={
+          jobIsSaved
+            ? (event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  viewFinalResult();
+                }
+              }
+            : undefined
+        }
+        role={jobIsSaved ? "link" : undefined}
+        tabIndex={jobIsSaved ? 0 : undefined}
+      >
         <div className="data-mining-panel-label" id="orchestrator-panel-label">
           ORCHESTRATOR PANEL
         </div>

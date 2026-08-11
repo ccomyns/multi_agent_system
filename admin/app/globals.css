@@ -1949,7 +1949,8 @@ tbody tr:hover {
   outline-offset: 3px;
 }
 
-.data-mining-monitor-main {
+.data-mining-monitor-main,
+.data-mining-result-main {
   display: flex;
   flex: 1;
   min-height: 0;
@@ -2051,6 +2052,108 @@ tbody tr:hover {
 .orchestrator-task strong {
   color: var(--text-strong);
   font-weight: 750;
+}
+
+.orchestrator-panel.is-result-viewable {
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.orchestrator-panel.is-result-viewable:hover {
+  border-color: var(--blue-strong);
+  box-shadow: 0 16px 44px rgb(47 111 179 / 16%);
+}
+
+.orchestrator-panel.is-result-viewable:focus-visible {
+  outline: 3px solid rgb(47 111 179 / 28%);
+  outline-offset: 3px;
+}
+
+.final-result-page {
+  position: relative;
+  display: flex;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  align-items: flex-start;
+  flex-direction: column;
+  padding-top: 38px;
+}
+
+.final-result-viewer {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--blue);
+  border-radius: 22px;
+  box-shadow: 0 28px 80px rgb(16 40 70 / 28%);
+}
+
+.final-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 20px;
+  color: #ffffff;
+  background: var(--blue);
+}
+
+.final-result-header span {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.075em;
+}
+
+.final-result-header h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 750;
+}
+
+.final-result-content {
+  min-height: 0;
+  flex: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: #f7f9fc;
+}
+
+.final-result-content pre {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 20px;
+  color: #172b46;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.final-result-message {
+  display: grid;
+  min-height: 100%;
+  align-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 32px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.final-result-error {
+  color: var(--red);
 }
 
 .orchestrator-failure,
@@ -2472,7 +2575,8 @@ tbody tr:hover {
     flex-direction: column;
   }
 
-  .data-mining-monitor-main {
+  .data-mining-monitor-main,
+  .data-mining-result-main {
     padding: 14px;
     overflow: auto;
   }
@@ -2484,6 +2588,16 @@ tbody tr:hover {
 
   .data-mining-panel {
     padding: 16px;
+    border-radius: 18px;
+  }
+
+  .final-result-page {
+    align-items: flex-start;
+  }
+
+  .final-result-viewer {
+    height: auto;
+    min-height: 420px;
     border-radius: 18px;
   }
 
