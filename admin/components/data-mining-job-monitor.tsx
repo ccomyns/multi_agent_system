@@ -106,19 +106,27 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
     router.push(`/jobs/${encodeURIComponent(jobId)}/result`);
   }
 
-  const progress = snapshot?.progress ?? "launching_orchestrator";
-  const task = snapshot?.job.originalTask ?? "Loading the original task…";
-  const jobType = snapshot?.job.typeOfJob ?? DEFAULT_JOB_TYPE;
-  const subagents = snapshot?.subagents ?? [];
+  if (snapshot === null) {
+    return (
+      <div className="data-mining-monitor-loading" aria-busy="true" aria-live="polite">
+        <span className="data-mining-loading-spinner" aria-hidden="true" />
+        <span>Loading job details…</span>
+        {error ? <small>{error} Retrying automatically.</small> : null}
+      </div>
+    );
+  }
+
+  const progress = snapshot.progress;
+  const task = snapshot.job.originalTask;
+  const jobType = snapshot.job.typeOfJob ?? DEFAULT_JOB_TYPE;
+  const subagents = snapshot.subagents;
   const jobIsActive =
-    snapshot !== null &&
     (snapshot.job.status === "initializing" || snapshot.job.status === "running");
   const jobIsSaved =
-    snapshot !== null &&
     (snapshot.job.status === "completed" || snapshot.job.status === "failed");
 
   return (
-    <div className="data-mining-monitor" aria-busy={snapshot === null}>
+    <div className="data-mining-monitor">
       {jobIsSaved ? (
         <Link className="data-mining-back-link" href="/jobs/saved">
           <ArrowLeft size={12} strokeWidth={2} aria-hidden="true" />
@@ -160,7 +168,7 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
           <strong>Input Task:</strong> {task}
         </div>
 
-        {snapshot?.orchestratorError ? (
+        {snapshot.orchestratorError ? (
           <div className="orchestrator-failure" role="alert">
             <AlertTriangle size={15} aria-hidden="true" />
             <span>{snapshot.orchestratorError}</span>

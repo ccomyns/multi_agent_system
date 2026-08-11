@@ -1972,6 +1972,41 @@ tbody tr:hover {
   gap: 16px;
 }
 
+.data-mining-monitor-loading {
+  display: grid;
+  flex: 1;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.data-mining-monitor-loading small {
+  max-width: 440px;
+  color: var(--amber);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.data-mining-loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgb(47 111 179 / 20%);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: data-mining-spin 700ms linear infinite;
+}
+
+@keyframes data-mining-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .data-mining-panel {
   display: flex;
   min-width: 0;
