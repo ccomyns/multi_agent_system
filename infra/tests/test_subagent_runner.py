@@ -55,9 +55,14 @@ class SubagentRunnerTests(unittest.TestCase):
         run.failure_file = run.result_dir / "failure.md"
         run.codex_final_message = run.work_dir / "codex-final-message.md"
         run.codex_home = root / "codex-home"
+        run.bootstrap_log = root / "logs" / "bootstrap.log"
+        run.codex_log = root / "logs" / "codex.log"
         run.s3 = Mock()
         run.ssm = Mock()
         run.prepare_directories()
+        run.bootstrap_log.parent.mkdir()
+        run.bootstrap_log.write_text("cloud-init started\n", encoding="utf-8")
+        run.codex_log.write_text("", encoding="utf-8")
         return run
 
     def task_spec(self, run: SubagentRun) -> dict[str, object]:
@@ -121,6 +126,8 @@ class SubagentRunnerTests(unittest.TestCase):
             self.assertEqual(command[command.index("--cd") + 1], str(run.work_dir))
             self.assertNotIn("danger-full-access", command)
             self.assertEqual(call.call_args.kwargs["env"]["CODEX_HOME"], str(run.codex_home))
+            self.assertIs(call.call_args.kwargs["stderr"], runner_module.subprocess.STDOUT)
+            self.assertEqual(call.call_args.kwargs["stdout"].name, str(run.codex_log))
             self.assertEqual(
                 call.call_args.kwargs["env"]["TMPDIR"],
                 str(run.work_dir / "tmp"),
@@ -132,6 +139,8 @@ class SubagentRunnerTests(unittest.TestCase):
 
             config = (run.codex_home / "config.toml").read_text(encoding="utf-8")
             self.assertIn('approval_policy = "never"', config)
+            self.assertIn("save the exact script you ran", config)
+            self.assertIn("raw and processed scraped data files", config)
             self.assertIn('writable_roots = ["/summary"]', config)
             self.assertIn("network_access = true", config)
             self.assertIn("exclude_slash_tmp = true", config)
@@ -154,8 +163,11 @@ class SubagentRunnerTests(unittest.TestCase):
             run = self.make_run(Path(temporary))
             run.summary_file.write_text("Work summary", encoding="utf-8")
             run.results_file.write_text('{"records": []}', encoding="utf-8")
+            (run.work_dir / "scrape.py").write_text("print('scrape')\n", encoding="utf-8")
+            (run.work_dir / "scraped-data.json").write_text("[]\n", encoding="utf-8")
 
             outputs = run.upload_data_outputs()
+            outputs.update(run.upload_debug_artifacts())
             outputs["completion_marker_uri"] = run.terminal_marker_uri("completed")
             run.upload_status("completed", **outputs)
             run.upload_terminal_marker("completed")
@@ -166,8 +178,14 @@ class SubagentRunnerTests(unittest.TestCase):
                 calls[1].kwargs["Key"],
                 f"{run.agent_prefix}/summary/results_{run.agent_id}.json",
             )
-            self.assertEqual(calls[2].kwargs["Key"], f"{run.agent_prefix}/status/completed.json")
-            self.assertEqual(calls[3].kwargs["Key"], f"{run.agent_prefix}/result/completed.md")
+            keys = [call.kwargs["Key"] for call in calls]
+            self.assertIn(f"{run.agent_prefix}/debug/bootstrap.log", keys)
+            self.assertIn(f"{run.agent_prefix}/debug/codex.log", keys)
+            self.assertIn(f"{run.agent_prefix}/work/scrape.py", keys)
+            self.assertIn(f"{run.agent_prefix}/work/scraped-data.json", keys)
+            self.assertGreaterEqual(keys.count(f"{run.agent_prefix}/summary/summary.md"), 2)
+            self.assertEqual(keys[-2], f"{run.agent_prefix}/status/completed.json")
+            self.assertEqual(keys[-1], f"{run.agent_prefix}/result/completed.md")
             self.assertEqual(
                 run.completed_file.read_text(encoding="utf-8"),
                 "Completed successfully.\n",

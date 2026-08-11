@@ -230,8 +230,8 @@ are separate so one can be rebuilt without unnecessarily rebuilding the other.
 The current versions are:
 
 ```hcl
-orchestrator_image_version = "1.0.4"
-agent_image_version        = "1.0.2"
+orchestrator_image_version = "1.0.6"
+agent_image_version        = "1.0.4"
 ```
 
 Increment `orchestrator_image_version` for orchestrator runtime or recipe

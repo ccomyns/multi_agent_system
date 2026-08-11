@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import unittest
 from unittest.mock import Mock, patch
 
@@ -177,6 +178,11 @@ class SpawnTests(unittest.TestCase):
         user_data = ec2.run_instances.call_args.kwargs["UserData"]
         self.assertIn("TASK_S3_KEY=" + handoff["task_s3_key"], user_data)
         self.assertIn("systemctl start --no-block multi-agent-subagent.service", user_data)
+        self.assertIn("BOOTSTRAP_LOG_PATH=/var/log/multi-agent/subagent-bootstrap.log", user_data)
+        self.assertIn("CODEX_LOG_PATH=/var/log/multi-agent/subagent-codex.log", user_data)
+        self.assertNotIn("apt-get", user_data)
+        self.assertNotIn("bubblewrap", user_data)
+        subprocess.run(["bash", "-n"], input=user_data, text=True, check=True)
         self.assertNotIn("Investigate revenue quality", user_data)
         self.assertNotIn("sleep 1800", user_data)
 

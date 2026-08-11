@@ -25,7 +25,7 @@ data "aws_ami" "ubuntu_2404" {
 
 resource "aws_imagebuilder_component" "agent_core" {
   name        = "${var.project_name}-agent-core"
-  description = "Install current Node.js 22, Codex CLI, and DuckDB CLI releases."
+  description = "Install current Node.js 22, Codex CLI, DuckDB CLI, and Linux sandbox dependencies."
   platform    = "Linux"
   version     = var.agent_image_version
 
@@ -46,7 +46,15 @@ resource "aws_imagebuilder_component" "agent_core" {
 
                   apt-get update
                   apt-get upgrade -y
-                  apt-get install -y ca-certificates curl xz-utils python3 python3-venv
+                  apt-get install -y \
+                    apparmor-profiles apparmor-utils bubblewrap \
+                    ca-certificates curl xz-utils python3 python3-venv
+
+                  bwrap_profile_source=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+                  bwrap_profile_destination=/etc/apparmor.d/bwrap-userns-restrict
+                  test -f "$bwrap_profile_source"
+                  install -m 0644 "$bwrap_profile_source" "$bwrap_profile_destination"
+                  apparmor_parser -r "$bwrap_profile_destination"
 
                   curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
                     -o /tmp/node-shasums.txt
@@ -70,6 +78,7 @@ resource "aws_imagebuilder_component" "agent_core" {
                     echo "node=$(node --version)"
                     echo "codex=$(codex --version)"
                     echo "duckdb=$(duckdb --version)"
+                    echo "bubblewrap=$(bwrap --version)"
                   } > /etc/agent-image-manifest
 
                   rm -f "/tmp/$node_archive" /tmp/node-shasums.txt /tmp/install-duckdb.sh
@@ -93,6 +102,8 @@ resource "aws_imagebuilder_component" "agent_core" {
                 "node --version",
                 "codex --version",
                 "duckdb --version",
+                "bwrap --version",
+                "test -f /etc/apparmor.d/bwrap-userns-restrict",
               ]
             }
           }
@@ -263,6 +274,7 @@ resource "aws_imagebuilder_component" "orchestrator_runtime" {
                 "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/orchestrator_runner.py",
                 "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/spawn_agent_mcp.py",
                 "/opt/multi-agent/venv/bin/python -c 'from mcp.server.fastmcp import FastMCP'",
+                "cd /var/lib/multi-agent && runuser -u multi-agent -- codex sandbox linux -- /bin/true",
                 "test -x /opt/multi-agent/runtime/bin/spawn-agent-mcp",
                 "systemd-analyze verify /etc/systemd/system/multi-agent-orchestrator.service",
                 "test ! -e /etc/systemd/system/multi-user.target.wants/multi-agent-orchestrator.service",
@@ -438,6 +450,7 @@ resource "aws_imagebuilder_component" "subagent_runtime" {
                 "set -euo pipefail",
                 "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/subagent_runner.py",
                 "/opt/multi-agent/venv/bin/python -c 'import boto3'",
+                "cd /var/lib/multi-agent && runuser -u multi-agent -- codex sandbox linux -- /bin/true",
                 "test -x /opt/multi-agent/runtime/bin/run-subagent",
                 "systemd-analyze verify /etc/systemd/system/multi-agent-subagent.service",
                 "test ! -e /etc/systemd/system/multi-user.target.wants/multi-agent-subagent.service",

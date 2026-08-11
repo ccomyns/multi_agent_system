@@ -53,10 +53,15 @@ class OrchestratorRunnerTests(unittest.TestCase):
         run.orchestrator_model = "gpt-5.6-terra"
         run.subagent_model = "gpt-5.6-luna"
         run.workspace = root / "workspace"
-        run.codex_home = run.workspace / ".codex"
+        run.codex_home = root / "codex-home"
         run.plan_file = run.workspace / "plan.md"
         run.final_message = run.workspace / "final.md"
         run.final_result = run.workspace / "final_result.json"
+        run.result_dir = root / "result"
+        run.completed_file = run.result_dir / "completed.md"
+        run.failure_file = run.result_dir / "failure.md"
+        run.bootstrap_log = root / "logs" / "bootstrap.log"
+        run.codex_log = root / "logs" / "codex.log"
         run.workspace_bucket = "agent-workspace-bucket"
         run.s3 = Mock()
         run.mcp_command = root / "spawn-agent-mcp"
@@ -67,6 +72,10 @@ class OrchestratorRunnerTests(unittest.TestCase):
         )
         run.mcp_command.write_text("#!/bin/sh\n", encoding="utf-8")
         run.mcp_command.chmod(0o755)
+        run.prepare_directories()
+        run.bootstrap_log.parent.mkdir()
+        run.bootstrap_log.write_text("cloud-init started\n", encoding="utf-8")
+        run.codex_log.write_text("", encoding="utf-8")
         return run
 
     def write_codex_outputs(self, run: OrchestratorRun) -> None:
@@ -100,6 +109,8 @@ class OrchestratorRunnerTests(unittest.TestCase):
             self.assertEqual(command[command.index("--sandbox") + 1], "workspace-write")
             self.assertEqual(command[-1], task)
             self.assertEqual(call.call_args.kwargs["env"]["CODEX_HOME"], str(run.codex_home))
+            self.assertIs(call.call_args.kwargs["stderr"], runner_module.subprocess.STDOUT)
+            self.assertEqual(call.call_args.kwargs["stdout"].name, str(run.codex_log))
             self.assertEqual(
                 call.call_args.kwargs["env"]["ORCHESTRATOR_WORKSPACE"],
                 str(run.workspace),
@@ -111,6 +122,17 @@ class OrchestratorRunnerTests(unittest.TestCase):
             self.assertIn("create final_result.json", config)
             self.assertIn("Choose the JSON structure", config)
             self.assertIn("active_subagent_limit_reached", config)
+            self.assertIn("A subagent should have ownership over a single URL", config)
+            self.assertIn("Include the URL of the website", config)
+            self.assertIn("use Playwright with Chromium", config)
+            self.assertIn("click through and explore", config)
+            self.assertIn("pagination, filters, expandable sections", config)
+            self.assertIn("strong but bounded effort", config)
+            self.assertIn("stop searching rather than repeatedly", config)
+            self.assertIn("unavailable or not publicly listed", config)
+            self.assertIn("and then finish normally", config)
+            self.assertIn("following relevant same-site links", config)
+            self.assertIn("Do not perform web scraping in the orchestrator", config)
             self.assertIn("retain that rejected task", config)
             self.assertIn("retry the rejected task until its spawn request is accepted", config)
             self.assertIn("must never cause a planned task to be abandoned", config)
@@ -130,7 +152,6 @@ class OrchestratorRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             run = self.make_run(Path(temporary))
             run.mcp_command.unlink()
-            run.workspace.mkdir()
             with patch.object(runner_module.subprocess, "run") as call:
                 with self.assertRaisesRegex(RuntimeError, "spawn_agent MCP executable is missing"):
                     run.run_codex("Investigate a market.")
@@ -155,7 +176,6 @@ class OrchestratorRunnerTests(unittest.TestCase):
     def test_upload_outputs_publishes_plan_json_and_final_message(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run = self.make_run(Path(temporary))
-            run.workspace.mkdir()
             self.write_codex_outputs(run)
 
             uploaded = run.upload_outputs()
@@ -174,12 +194,39 @@ class OrchestratorRunnerTests(unittest.TestCase):
                 uploaded["final_result_uri"].endswith("/result/final_result.json")
             )
 
+    def test_debug_bundle_and_terminal_marker_are_uploaded_before_shutdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            self.write_codex_outputs(run)
+            (run.workspace / "collected").mkdir()
+            (run.workspace / "collected" / "agent-data.json").write_text(
+                '{"records": []}\n', encoding="utf-8"
+            )
+
+            outputs = run.upload_outputs()
+            outputs.update(run.upload_debug_artifacts())
+            outputs["completion_marker_uri"] = run.terminal_marker_uri("completed")
+            run.upload_status("completed", **outputs)
+            run.upload_terminal_marker("completed")
+
+            keys = [call.kwargs["Key"] for call in run.s3.put_object.call_args_list]
+            prefix = f"jobs/{run.job_id}/orchestrator"
+            self.assertIn(f"{prefix}/debug/bootstrap.log", keys)
+            self.assertIn(f"{prefix}/debug/codex.log", keys)
+            self.assertIn(f"{prefix}/workspace/plan.md", keys)
+            self.assertIn(f"{prefix}/workspace/collected/agent-data.json", keys)
+            self.assertEqual(keys[-2], f"{prefix}/status/completed.json")
+            self.assertEqual(keys[-1], f"{prefix}/result/completed.md")
+            self.assertEqual(
+                run.completed_file.read_text(encoding="utf-8"),
+                "Completed successfully.\n",
+            )
+
     def test_refreshed_auth_does_not_overwrite_a_manual_rotation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run = self.make_run(Path(temporary))
             run.auth_parameter = "/project/codex/auth-json"
             run.original_auth = '{"tokens":"old"}'
-            run.codex_home.mkdir(parents=True)
             (run.codex_home / "auth.json").write_text(
                 '{"tokens":"refreshed"}', encoding="utf-8"
             )

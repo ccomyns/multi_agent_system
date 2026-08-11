@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 from datetime import datetime, timezone
@@ -15,7 +17,6 @@ from pathlib import Path
 from typing import Any
 
 import boto3
-from botocore.exceptions import ClientError
 
 
 LOG = logging.getLogger("orchestrator-runner")
@@ -38,6 +39,10 @@ def toml_string(value: str) -> str:
 
 def reject_nonstandard_json_constant(value: str) -> None:
     raise ValueError(f"non-standard JSON constant {value!r} is not allowed")
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def read_utf8(path: Path, size_limit: int, label: str) -> str:
@@ -81,12 +86,32 @@ class OrchestratorRun:
         self.plan_file = self.workspace / "plan.md"
         self.final_message = self.workspace / "final.md"
         self.final_result = self.workspace / "final_result.json"
+        self.result_dir = Path("/var/lib/multi-agent/results") / self.job_id
+        self.completed_file = self.result_dir / "completed.md"
+        self.failure_file = self.result_dir / "failure.md"
+        self.bootstrap_log = Path(
+            os.environ.get(
+                "BOOTSTRAP_LOG_PATH",
+                "/var/log/multi-agent/orchestrator-bootstrap.log",
+            )
+        )
+        self.codex_log = Path(
+            os.environ.get(
+                "CODEX_LOG_PATH",
+                "/var/log/multi-agent/orchestrator-codex.log",
+            )
+        )
 
         self.ddb = boto3.client("dynamodb", region_name=self.region)
         self.s3 = boto3.client("s3", region_name=self.region)
         self.ssm = boto3.client("ssm", region_name=self.region)
 
         self.original_auth = ""
+
+    def prepare_directories(self) -> None:
+        for directory in (self.workspace, self.codex_home, self.result_dir):
+            directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+            os.chmod(directory, 0o700)
 
     def load_task(self) -> str:
         response = self.ddb.get_item(
@@ -198,7 +223,23 @@ approval_mode = "approve"
             "you accomplish your task/help you brainstorm different questions for the "
             "subagents to investigate. You may call spawn in subagents after you have "
             "created your plan.md file. Launch the planned subagents before waiting for "
-            "them and retain every accepted agent_id. At most eight subagents can be active "
+            "them and retain every accepted agent_id. A subagent should have ownership over "
+            "a single URL. Include the URL of the website you want the subagent to webscrape "
+            "in the task that you give it. Every web-scraping task passed to spawn_agent "
+            "must instruct the subagent to use Playwright with Chromium to inspect and "
+            "navigate the target website. Tell the subagent to click through and explore "
+            "relevant pagination, filters, expandable sections, directory and detail pages, "
+            "and other first-party pages within that website as needed to find the requested "
+            "data. Require a strong but bounded effort: inspect a few likely relevant pages "
+            "and controls, but if the requested data or a particular field is not present "
+            "after that reasonable exploration, stop searching rather than repeatedly "
+            "traversing the site. The subagent should record the data as unavailable or not "
+            "publicly listed, explain which pages it checked and any coverage limitations in "
+            "its results and summary, and then finish normally. The single URL is the "
+            "subagent's starting point and ownership boundary, not a prohibition on following "
+            "relevant same-site links. "
+            "Do not perform web scraping in the orchestrator; delegate each target URL to a "
+            "subagent. At most eight subagents can be active "
             "at once. If a spawn request is rejected with active_subagent_limit_reached, "
             "retain that rejected task and do not pass its unaccepted agent_id to the "
             "collection tool. Once the accepted first batch of up to eight agents has "
@@ -249,7 +290,15 @@ approval_mode = "approve"
             task,
         ]
         LOG.info("starting Codex for job %s with model %s", self.job_id, self.orchestrator_model)
-        subprocess.run(command, env=environment, check=True)
+        self.codex_log.parent.mkdir(parents=True, exist_ok=True)
+        with self.codex_log.open("ab") as codex_log:
+            subprocess.run(
+                command,
+                env=environment,
+                check=True,
+                stdout=codex_log,
+                stderr=subprocess.STDOUT,
+            )
 
         read_utf8(self.plan_file, MAX_TEXT_OUTPUT_BYTES, "plan.md")
         read_utf8(self.final_message, MAX_TEXT_OUTPUT_BYTES, "final.md")
@@ -298,6 +347,114 @@ approval_mode = "approve"
             )
             uploaded[name] = f"s3://{self.workspace_bucket}/{key}"
         return uploaded
+
+    def _upload_file(self, source: Path, key: str, content_type: str | None = None) -> str:
+        metadata = source.lstat()
+        if not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeError(f"refusing to upload non-regular artifact {source}")
+        guessed_type = mimetypes.guess_type(source.name)[0]
+        with source.open("rb") as body:
+            self.s3.put_object(
+                Bucket=self.workspace_bucket,
+                Key=key,
+                Body=body,
+                ContentLength=metadata.st_size,
+                ContentType=content_type or guessed_type or "application/octet-stream",
+                ServerSideEncryption="AES256",
+            )
+        return f"s3://{self.workspace_bucket}/{key}"
+
+    def upload_debug_artifacts(self, *, strict: bool = True) -> dict[str, Any]:
+        """Upload logs and the complete model-writable workspace before termination."""
+        prefix = f"jobs/{self.job_id}/orchestrator"
+        uploaded_count = 0
+        errors: list[str] = []
+
+        named_artifacts = (
+            (self.bootstrap_log, f"{prefix}/debug/bootstrap.log"),
+            (self.codex_log, f"{prefix}/debug/codex.log"),
+        )
+        for source, key in named_artifacts:
+            try:
+                self._upload_file(source, key, "text/plain; charset=utf-8")
+                uploaded_count += 1
+            except Exception as error:
+                errors.append(f"{source}: {type(error).__name__}: {error}")
+
+        if self.workspace.is_dir():
+            try:
+                sources = sorted(self.workspace.rglob("*"))
+            except Exception as error:
+                errors.append(f"{self.workspace}: {type(error).__name__}: {error}")
+                sources = []
+            for source in sources:
+                try:
+                    metadata = source.lstat()
+                    if not stat.S_ISREG(metadata.st_mode):
+                        continue
+                    relative = source.relative_to(self.workspace).as_posix()
+                    self._upload_file(source, f"{prefix}/workspace/{relative}")
+                    uploaded_count += 1
+                except Exception as error:
+                    errors.append(f"{source}: {type(error).__name__}: {error}")
+
+        if errors and strict:
+            raise RuntimeError("could not upload all debugging artifacts: " + "; ".join(errors))
+        return {
+            "debug_prefix_uri": f"s3://{self.workspace_bucket}/{prefix}/debug/",
+            "workspace_prefix_uri": f"s3://{self.workspace_bucket}/{prefix}/workspace/",
+            "debug_artifact_count": uploaded_count,
+            "artifact_upload_errors": errors,
+        }
+
+    def terminal_marker_uri(self, state: str) -> str:
+        if state not in {"completed", "failed"}:
+            raise ValueError(f"unsupported terminal marker state: {state}")
+        marker_name = "completed.md" if state == "completed" else "failure.md"
+        return (
+            f"s3://{self.workspace_bucket}/jobs/{self.job_id}/"
+            f"orchestrator/result/{marker_name}"
+        )
+
+    def upload_terminal_marker(self, state: str) -> str:
+        if state == "completed":
+            marker = self.completed_file
+            message = "Completed successfully.\n"
+        elif state == "failed":
+            marker = self.failure_file
+            message = "Run failed.\n"
+        else:
+            raise ValueError(f"unsupported terminal marker state: {state}")
+
+        marker.write_text(message, encoding="utf-8")
+        os.chmod(marker, 0o600)
+        key = f"jobs/{self.job_id}/orchestrator/result/{marker.name}"
+        self.s3.put_object(
+            Bucket=self.workspace_bucket,
+            Key=key,
+            Body=marker.read_bytes(),
+            ContentType="text/markdown; charset=utf-8",
+            ServerSideEncryption="AES256",
+        )
+        return f"s3://{self.workspace_bucket}/{key}"
+
+    def upload_status(self, state: str, **details: Any) -> None:
+        record = {
+            "schema_version": 1,
+            "state": state,
+            "job_id": self.job_id,
+            "orchestrator_instance_id": self.orchestrator_instance_id,
+            "model": self.orchestrator_model,
+            "recorded_at": utc_now(),
+            **details,
+        }
+        self.s3.put_object(
+            Bucket=self.workspace_bucket,
+            Key=f"jobs/{self.job_id}/orchestrator/status/{state}.json",
+            Body=json.dumps(record, indent=2, sort_keys=True).encode("utf-8"),
+            ContentType="application/json",
+            ServerSideEncryption="AES256",
+        )
 
     def finish_job(self, status: str) -> None:
         finished_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -364,27 +521,59 @@ def main() -> int:
     run: OrchestratorRun | None = None
     try:
         run = OrchestratorRun()
+        run.prepare_directories()
         task = run.load_task()
         run.install_auth()
         run.run_codex(task)
         output_uris = run.upload_outputs()
+        output_uris.update(run.upload_debug_artifacts())
         run.finish_job("completed")
+        try:
+            run.persist_refreshed_auth()
+        except Exception:
+            LOG.exception("could not persist refreshed Codex authentication")
+        output_uris["completion_marker_uri"] = run.terminal_marker_uri("completed")
+        run.upload_status("completed", **output_uris)
+        # The marker is deliberately the final S3 write before service exit/shutdown.
+        run.upload_terminal_marker("completed")
         LOG.info("completed job %s; outputs=%s", run.job_id, output_uris)
         return 0
     except Exception as error:
         LOG.exception("orchestrator job failed")
         if run is not None:
             try:
+                artifacts = run.upload_debug_artifacts(strict=False)
+            except Exception as artifact_error:
+                LOG.exception("could not upload orchestrator debugging artifacts")
+                artifacts = {
+                    "artifact_upload_errors": [
+                        f"{type(artifact_error).__name__}: {artifact_error}"
+                    ]
+                }
+            try:
                 run.finish_job("failed")
-            except ClientError:
+            except Exception:
                 LOG.exception("could not mark the job failed or release its lock")
-        return 1
-    finally:
-        if run is not None:
             try:
                 run.persist_refreshed_auth()
             except Exception:
                 LOG.exception("could not persist refreshed Codex authentication")
+            try:
+                run.upload_status(
+                    "failed",
+                    error_type=type(error).__name__,
+                    error=str(error)[:1000],
+                    failure_marker_uri=run.terminal_marker_uri("failed"),
+                    **artifacts,
+                )
+            except Exception:
+                LOG.exception("could not upload orchestrator failure status")
+            try:
+                # Preserve a final failure marker even when Codex exits early.
+                run.upload_terminal_marker("failed")
+            except Exception:
+                LOG.exception("could not upload orchestrator failure marker")
+        return 1
 
 
 if __name__ == "__main__":

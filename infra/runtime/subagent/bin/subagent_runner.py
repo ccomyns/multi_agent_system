@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import os
 import re
+import signal
 import stat
 import subprocess
 import tempfile
@@ -23,6 +25,14 @@ AGENT_ID_PATTERN = re.compile(r"^agent-[0-9a-f]{24}$")
 INSTANCE_ID_PATTERN = re.compile(r"^i-[0-9a-f]{8,17}$")
 MAX_SUMMARY_BYTES = 1024 * 1024
 MAX_RESULTS_BYTES = 50 * 1024 * 1024
+
+
+class TerminationRequested(RuntimeError):
+    """Raised when the TTL supervisor asks the runner to publish and exit."""
+
+
+def handle_termination(signum: int, _frame: Any) -> None:
+    raise TerminationRequested(f"received signal {signum}; publishing failure artifacts")
 
 
 def required_env(name: str) -> str:
@@ -76,6 +86,18 @@ class SubagentRun:
         self.failure_file = self.result_dir / "failure.md"
         self.codex_final_message = self.work_dir / "codex-final-message.md"
         self.codex_home = Path("/var/lib/multi-agent/codex-home")
+        self.bootstrap_log = Path(
+            os.environ.get(
+                "BOOTSTRAP_LOG_PATH",
+                "/var/log/multi-agent/subagent-bootstrap.log",
+            )
+        )
+        self.codex_log = Path(
+            os.environ.get(
+                "CODEX_LOG_PATH",
+                "/var/log/multi-agent/subagent-codex.log",
+            )
+        )
 
         self.s3 = boto3.client("s3", region_name=self.region)
         self.ssm = boto3.client("ssm", region_name=self.region)
@@ -148,7 +170,9 @@ class SubagentRun:
         instructions = (
             "You are one data-mining subagent working on one focused task. Store every "
             "working artifact, code file, cloned repository, and internet download under "
-            "/work only. Do not write working content elsewhere. Before finishing, create "
+            "/work only. Do not write working content elsewhere. When web scraping, save "
+            "the exact script you ran and the raw and processed scraped data files under "
+            "/work so they can be archived. Before finishing, create "
             "/summary/summary.md explaining the approach you took, sources and methods used, "
             "significant findings, useful artifacts in /work, and any caveats. Also create "
             f"/summary/results_{self.agent_id}.json containing the data you gathered as valid "
@@ -206,7 +230,15 @@ exclude_tmpdir_env_var = true
             task,
         ]
         LOG.info("starting Codex for agent %s with model %s", self.agent_id, self.model)
-        subprocess.run(command, env=environment, check=True)
+        self.codex_log.parent.mkdir(parents=True, exist_ok=True)
+        with self.codex_log.open("ab") as codex_log:
+            subprocess.run(
+                command,
+                env=environment,
+                check=True,
+                stdout=codex_log,
+                stderr=subprocess.STDOUT,
+            )
 
         size_limits = {
             self.summary_file: MAX_SUMMARY_BYTES,
@@ -263,6 +295,71 @@ exclude_tmpdir_env_var = true
             uploaded[name] = f"s3://{self.workspace_bucket}/{key}"
         return uploaded
 
+    def _upload_file(self, source: Path, key: str, content_type: str | None = None) -> str:
+        metadata = source.lstat()
+        if not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeError(f"refusing to upload non-regular artifact {source}")
+        guessed_type = mimetypes.guess_type(source.name)[0]
+        with source.open("rb") as body:
+            self.s3.put_object(
+                Bucket=self.workspace_bucket,
+                Key=key,
+                Body=body,
+                ContentLength=metadata.st_size,
+                ContentType=content_type or guessed_type or "application/octet-stream",
+                ServerSideEncryption="AES256",
+            )
+        return f"s3://{self.workspace_bucket}/{key}"
+
+    def upload_debug_artifacts(self, *, strict: bool = True) -> dict[str, Any]:
+        """Upload logs and every regular model output file before a terminal marker."""
+        uploaded_count = 0
+        errors: list[str] = []
+
+        named_artifacts = (
+            (self.bootstrap_log, f"{self.agent_prefix}/debug/bootstrap.log"),
+            (self.codex_log, f"{self.agent_prefix}/debug/codex.log"),
+        )
+        for source, key in named_artifacts:
+            try:
+                self._upload_file(source, key, "text/plain; charset=utf-8")
+                uploaded_count += 1
+            except Exception as error:
+                errors.append(f"{source}: {type(error).__name__}: {error}")
+
+        artifact_roots = (
+            (self.work_dir, f"{self.agent_prefix}/work"),
+            (self.summary_dir, f"{self.agent_prefix}/summary"),
+        )
+        for local_root, s3_prefix in artifact_roots:
+            if not local_root.is_dir():
+                continue
+            try:
+                sources = sorted(local_root.rglob("*"))
+            except Exception as error:
+                errors.append(f"{local_root}: {type(error).__name__}: {error}")
+                continue
+            for source in sources:
+                try:
+                    metadata = source.lstat()
+                    if not stat.S_ISREG(metadata.st_mode):
+                        continue
+                    relative = source.relative_to(local_root).as_posix()
+                    self._upload_file(source, f"{s3_prefix}/{relative}")
+                    uploaded_count += 1
+                except Exception as error:
+                    errors.append(f"{source}: {type(error).__name__}: {error}")
+
+        if errors and strict:
+            raise RuntimeError("could not upload all debugging artifacts: " + "; ".join(errors))
+        return {
+            "debug_prefix_uri": f"s3://{self.workspace_bucket}/{self.agent_prefix}/debug/",
+            "work_prefix_uri": f"s3://{self.workspace_bucket}/{self.agent_prefix}/work/",
+            "summary_prefix_uri": f"s3://{self.workspace_bucket}/{self.agent_prefix}/summary/",
+            "debug_artifact_count": uploaded_count,
+            "artifact_upload_errors": errors,
+        }
+
     def terminal_marker_uri(self, state: str) -> str:
         if state not in {"completed", "failed"}:
             raise ValueError(f"unsupported terminal marker state: {state}")
@@ -317,6 +414,8 @@ def main() -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    signal.signal(signal.SIGTERM, handle_termination)
+    signal.signal(signal.SIGINT, handle_termination)
     run: SubagentRun | None = None
     try:
         run = SubagentRun()
@@ -325,8 +424,11 @@ def main() -> int:
         run.install_auth()
         run.run_codex(task_spec["task"])
         outputs = run.upload_data_outputs()
+        outputs.update(run.upload_debug_artifacts())
         outputs["completion_marker_uri"] = run.terminal_marker_uri("completed")
         run.upload_status("completed", **outputs)
+        # This is deliberately the final S3 write. Exiting the service triggers
+        # instance shutdown only after the durable artifact bundle is complete.
         run.upload_terminal_marker("completed")
         LOG.info("completed agent %s; service shutdown will terminate the instance", run.agent_id)
         return 0
@@ -334,15 +436,29 @@ def main() -> int:
         LOG.exception("subagent run failed")
         if run is not None:
             try:
+                artifacts = run.upload_debug_artifacts(strict=False)
+            except Exception as artifact_error:
+                LOG.exception("could not upload subagent debugging artifacts")
+                artifacts = {
+                    "artifact_upload_errors": [
+                        f"{type(artifact_error).__name__}: {artifact_error}"
+                    ]
+                }
+            try:
                 run.upload_status(
                     "failed",
                     error_type=type(error).__name__,
                     error=str(error)[:1000],
                     failure_marker_uri=run.terminal_marker_uri("failed"),
+                    **artifacts,
                 )
-                run.upload_terminal_marker("failed")
             except Exception:
                 LOG.exception("could not upload subagent failure status")
+            try:
+                # Keep the failure marker last for collectors and termination diagnostics.
+                run.upload_terminal_marker("failed")
+            except Exception:
+                LOG.exception("could not upload subagent failure marker")
         return 1
 
 

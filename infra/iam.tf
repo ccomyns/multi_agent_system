@@ -176,8 +176,10 @@ resource "aws_iam_role_policy" "orchestrator" {
         Sid    = "ReadAndFinishOwnJob"
         Effect = "Allow"
         Action = [
+          "dynamodb:DeleteItem",
           "dynamodb:GetItem",
-          "dynamodb:TransactWriteItems"
+          "dynamodb:TransactWriteItems",
+          "dynamodb:UpdateItem"
         ]
         Resource = aws_dynamodb_table.jobs.arn
       },

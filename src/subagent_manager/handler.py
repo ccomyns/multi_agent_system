@@ -278,6 +278,14 @@ shutdown -h now
 set -euo pipefail
 
 install -d -m 0755 /etc/multi-agent
+install -d -o root -g multi-agent -m 0750 /var/log/multi-agent
+install -o root -g multi-agent -m 0640 /dev/null \
+  /var/log/multi-agent/subagent-bootstrap.log
+install -o multi-agent -g multi-agent -m 0600 /dev/null \
+  /var/log/multi-agent/subagent-codex.log
+exec > >(tee -a /var/log/multi-agent/subagent-bootstrap.log \
+  | logger -t multi-agent-subagent-bootstrap -s 2>/dev/console) 2>&1
+
 token="$(curl -fsS -X PUT \
   -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600' \
   http://169.254.169.254/latest/api/token)"
@@ -297,6 +305,8 @@ ORCHESTRATOR_INSTANCE_ID={orchestrator_id}
 SUBAGENT_MODEL={handoff["model"]}
 TASK_S3_KEY={handoff["task_s3_key"]}
 SUBAGENT_TTL_SECONDS={ttl_seconds}
+BOOTSTRAP_LOG_PATH=/var/log/multi-agent/subagent-bootstrap.log
+CODEX_LOG_PATH=/var/log/multi-agent/subagent-codex.log
 ENV
 echo "SUBAGENT_INSTANCE_ID=$instance_id" >> /etc/multi-agent/subagent.env
 chown root:multi-agent /etc/multi-agent/subagent.env

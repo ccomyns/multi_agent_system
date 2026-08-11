@@ -9,6 +9,13 @@ locals {
     set -euo pipefail
 
     install -d -m 0755 /etc/multi-agent
+    install -d -o root -g multi-agent -m 0750 /var/log/multi-agent
+    install -o root -g multi-agent -m 0640 /dev/null \
+      /var/log/multi-agent/orchestrator-bootstrap.log
+    install -o multi-agent -g multi-agent -m 0600 /dev/null \
+      /var/log/multi-agent/orchestrator-codex.log
+    exec > >(tee -a /var/log/multi-agent/orchestrator-bootstrap.log \
+      | logger -t multi-agent-orchestrator-bootstrap -s 2>/dev/console) 2>&1
 
     token="$(curl -fsS -X PUT \
       -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600' \
@@ -39,6 +46,8 @@ locals {
     SUBAGENT_MODEL=${var.subagent_model}
     SPAWN_AGENT_MCP_COMMAND=${var.spawn_agent_mcp_command}
     ORCHESTRATOR_DOCUMENTATION_DIR=/opt/multi-agent/runtime/docs
+    BOOTSTRAP_LOG_PATH=/var/log/multi-agent/orchestrator-bootstrap.log
+    CODEX_LOG_PATH=/var/log/multi-agent/orchestrator-codex.log
     ENV
     chown root:multi-agent /etc/multi-agent/orchestrator.env
     chmod 0640 /etc/multi-agent/orchestrator.env
