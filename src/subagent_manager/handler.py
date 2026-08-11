@@ -50,17 +50,15 @@ def _validate_id(value: Any, field_name: str) -> str:
     return value
 
 
-def _task_handoff(event: dict[str, Any], agent_id: str) -> dict[str, str] | None:
-    """Validate a real-job task handoff, or return None for legacy stress calls."""
+def _task_handoff(event: dict[str, Any], agent_id: str) -> dict[str, str]:
+    """Validate the job-scoped task handoff for a subagent launch."""
     supplied = {
         "job_id": event.get("job_id"),
         "task_s3_uri": event.get("task_s3_uri"),
         "model": event.get("model"),
     }
-    if all(value is None for value in supplied.values()):
-        return None
     if any(not isinstance(value, str) or not value for value in supplied.values()):
-        raise ValueError("job_id, task_s3_uri, and model must all be supplied for a real task")
+        raise ValueError("job_id, task_s3_uri, and model must all be supplied")
 
     job_id = supplied["job_id"]
     if not _JOB_ID_PATTERN.fullmatch(job_id):
@@ -126,7 +124,7 @@ def _reserve_slot(
     orchestrator_id: str,
     agent_id: str,
     created_at: str,
-    handoff: dict[str, str] | None = None,
+    handoff: dict[str, str],
 ) -> bool:
     table_name = os.environ["STATE_TABLE_NAME"]
     limit = int(os.environ.get("MAX_ACTIVE_SUBAGENTS", "8"))
@@ -141,12 +139,11 @@ def _reserve_slot(
         "state": "PROVISIONING",
         "created_at": created_at,
     }
-    if handoff:
-        agent.update(
-            job_id=handoff["job_id"],
-            task_s3_uri=handoff["task_s3_uri"],
-            model=handoff["model"],
-        )
+    agent.update(
+        job_id=handoff["job_id"],
+        task_s3_uri=handoff["task_s3_uri"],
+        model=handoff["model"],
+    )
     counter_key = _counter_key(orchestrator_id)
 
     try:
@@ -261,19 +258,8 @@ def _subagent_user_data(
     orchestrator_id: str,
     agent_id: str,
     ttl_seconds: int,
-    handoff: dict[str, str] | None,
+    handoff: dict[str, str],
 ) -> str:
-    # Stress tests intentionally omit task metadata and retain the cheap sleeper
-    # lifecycle. Real tasks start the runtime baked into the subagent AMI.
-    if handoff is None:
-        return f"""#!/bin/bash
-set -euo pipefail
-echo "subagent_id={agent_id}" > /var/log/subagent-bootstrap.log
-echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /var/log/subagent-bootstrap.log
-sleep {ttl_seconds}
-shutdown -h now
-"""
-
     return f"""#!/bin/bash
 set -euo pipefail
 
@@ -319,7 +305,7 @@ systemctl start --no-block multi-agent-subagent.service
 def _launch_instance(
     orchestrator_id: str,
     agent_id: str,
-    handoff: dict[str, str] | None = None,
+    handoff: dict[str, str],
 ) -> str:
     ttl_seconds = int(os.environ.get("SUBAGENT_TTL_SECONDS", "1800"))
     response = _client("ec2").run_instances(
@@ -507,12 +493,11 @@ def _spawn(event: dict[str, Any]) -> dict[str, Any]:
         "created_at": created_at,
         "launched_at": launched_at,
     }
-    if handoff:
-        record.update(
-            job_id=handoff["job_id"],
-            task_s3_uri=handoff["task_s3_uri"],
-            model=handoff["model"],
-        )
+    record.update(
+        job_id=handoff["job_id"],
+        task_s3_uri=handoff["task_s3_uri"],
+        model=handoff["model"],
+    )
     _audit("created", record)
     return _response(
         201,

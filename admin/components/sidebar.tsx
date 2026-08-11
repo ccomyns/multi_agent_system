@@ -3,7 +3,6 @@
 import {
   BriefcaseBusiness,
   Database,
-  FlaskConical,
   Layers3,
   Network,
   Presentation,
@@ -16,7 +15,6 @@ const NAV_ITEMS = [
   { href: "/jobs", label: "Launch a Job", Icon: BriefcaseBusiness },
   { href: "/database", label: "Database Management", Icon: Database },
   { href: "/slides", label: "Slide Deck Builder", Icon: Presentation },
-  { href: "/testing", label: "Testing", Icon: FlaskConical },
 ] as const;
 
 export function Sidebar() {

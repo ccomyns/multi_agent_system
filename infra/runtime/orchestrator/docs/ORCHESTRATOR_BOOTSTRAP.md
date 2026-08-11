@@ -11,8 +11,7 @@ agent-workspace bucket. EC2 Image Builder downloads and expands it under
 `/opt/multi-agent/runtime`; this
 keeps scripts and documentation out of the 16 KB inline component document and
 lets the bundle grow independently. The systemd service is installed disabled
-and is started only by the normal launch template. The stress-test template
-shares the environment setup but does not start the real runner.
+and is started by the orchestrator launch template.
 
 ## Authentication
 
@@ -66,7 +65,6 @@ by the orchestrator's `--model` flag.
 
 ## S3 data boundaries
 
-- `AUDIT_BUCKET_NAME` is reserved for lifecycle and stress-test audit records.
 - `AGENT_WORKSPACE_BUCKET_NAME` contains job-scoped inputs, intermediate
   artifacts, subagent outputs, final results, and Image Builder runtime bundles.
 - `GLOBAL_MEMORY_BUCKET_NAME` contains curated knowledge that persists across

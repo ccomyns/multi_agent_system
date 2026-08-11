@@ -30,6 +30,29 @@ class SpawnTests(unittest.TestCase):
         handler._clients.clear()
         self.environment.stop()
 
+    @staticmethod
+    def handoff(agent_id: str) -> dict[str, str]:
+        job_id = "job_abc1_1234abcd"
+        task_s3_key = f"jobs/{job_id}/agents/{agent_id}/input.json"
+        return {
+            "job_id": job_id,
+            "task_s3_uri": f"s3://agent-workspace-bucket/{task_s3_key}",
+            "task_s3_key": task_s3_key,
+            "model": "gpt-5.6-luna",
+        }
+
+    @classmethod
+    def spawn_event(cls, request_id: str) -> dict[str, str]:
+        handoff = cls.handoff(request_id)
+        return {
+            "action": "spawn",
+            "orchestrator_id": "orchestrator-1",
+            "request_id": request_id,
+            "job_id": handoff["job_id"],
+            "task_s3_uri": handoff["task_s3_uri"],
+            "model": handoff["model"],
+        }
+
     def test_first_eight_launches_succeed_and_ninth_is_rejected(self) -> None:
         records: dict[tuple[str, str], dict] = {}
         active_count = 0
@@ -37,7 +60,12 @@ class SpawnTests(unittest.TestCase):
         def existing(orchestrator_id: str, agent_id: str):
             return records.get((orchestrator_id, agent_id))
 
-        def reserve(orchestrator_id: str, agent_id: str, created_at: str, handoff=None) -> bool:
+        def reserve(
+            orchestrator_id: str,
+            agent_id: str,
+            created_at: str,
+            handoff: dict[str, str],
+        ) -> bool:
             nonlocal active_count
             if active_count >= 8:
                 return False
@@ -61,7 +89,7 @@ class SpawnTests(unittest.TestCase):
             patch.object(
                 handler,
                 "_launch_instance",
-                side_effect=lambda _, agent_id, handoff=None: f"i-{agent_id[-4:]}",
+                side_effect=lambda _, agent_id, handoff: f"i-{agent_id[-4:]}",
             ),
             patch.object(handler, "_mark_launched", side_effect=mark),
             patch.object(handler, "_active_count", side_effect=lambda _: active_count),
@@ -69,11 +97,7 @@ class SpawnTests(unittest.TestCase):
         ):
             results = [
                 handler.lambda_handler(
-                    {
-                        "action": "spawn",
-                        "orchestrator_id": "orchestrator-1",
-                        "request_id": f"request-{number}",
-                    },
+                    self.spawn_event(f"request-{number}"),
                     None,
                 )
                 for number in range(1, 10)
@@ -100,6 +124,7 @@ class SpawnTests(unittest.TestCase):
                 "orchestrator-1",
                 "agent-1",
                 "2026-01-01T00:00:00Z",
+                self.handoff("agent-1"),
             )
 
         self.assertTrue(reserved)
@@ -109,32 +134,6 @@ class SpawnTests(unittest.TestCase):
         self.assertEqual(put_item["ami_id"], {"S": "ami-browser-tools"})
         self.assertEqual(put_item["instance_type"], {"S": "t3.large"})
         self.assertEqual(put_item["ttl_seconds"], {"N": "1800"})
-
-    def test_launch_uses_prebaked_ami_t3_large_and_thirty_minute_ttl(self) -> None:
-        ec2 = Mock()
-        ec2.run_instances.return_value = {"Instances": [{"InstanceId": "i-subagent"}]}
-        with (
-            patch.dict(
-                os.environ,
-                {
-                    "SUBAGENT_AMI_ID": "ami-browser-tools",
-                    "SUBAGENT_INSTANCE_PROFILE_NAME": "subagent-profile",
-                    "SUBAGENT_INSTANCE_TYPE": "t3.large",
-                    "SUBAGENT_SECURITY_GROUP_ID": "sg-subagents",
-                    "SUBAGENT_SUBNET_ID": "subnet-public",
-                    "SUBAGENT_TTL_SECONDS": "1800",
-                },
-            ),
-            patch.object(handler, "_client", return_value=ec2),
-        ):
-            instance_id = handler._launch_instance("orchestrator-1", "agent-1")
-
-        self.assertEqual(instance_id, "i-subagent")
-        launch = ec2.run_instances.call_args.kwargs
-        self.assertEqual(launch["ImageId"], "ami-browser-tools")
-        self.assertEqual(launch["InstanceType"], "t3.large")
-        self.assertIn("sleep 1800", launch["UserData"])
-        self.assertNotIn("BlockDeviceMappings", launch)
 
     def test_real_task_launch_passes_only_trusted_s3_handoff_to_runner(self) -> None:
         ec2 = Mock()
@@ -176,6 +175,9 @@ class SpawnTests(unittest.TestCase):
             )
 
         user_data = ec2.run_instances.call_args.kwargs["UserData"]
+        self.assertEqual(ec2.run_instances.call_args.kwargs["ImageId"], "ami-browser-tools")
+        self.assertEqual(ec2.run_instances.call_args.kwargs["InstanceType"], "t3.large")
+        self.assertNotIn("BlockDeviceMappings", ec2.run_instances.call_args.kwargs)
         self.assertIn("TASK_S3_KEY=" + handoff["task_s3_key"], user_data)
         self.assertIn("systemctl start --no-block multi-agent-subagent.service", user_data)
         self.assertIn("BOOTSTRAP_LOG_PATH=/var/log/multi-agent/subagent-bootstrap.log", user_data)
@@ -185,6 +187,20 @@ class SpawnTests(unittest.TestCase):
         subprocess.run(["bash", "-n"], input=user_data, text=True, check=True)
         self.assertNotIn("Investigate revenue quality", user_data)
         self.assertNotIn("sleep 1800", user_data)
+
+    def test_spawn_requires_a_job_scoped_task_handoff(self) -> None:
+        result = handler.lambda_handler(
+            {
+                "action": "spawn",
+                "orchestrator_id": "orchestrator-1",
+                "request_id": "request-1",
+            },
+            None,
+        )
+
+        self.assertEqual(result["statusCode"], 400)
+        self.assertFalse(result["body"]["accepted"])
+        self.assertIn("must all be supplied", result["body"]["error"])
 
     def test_task_handoff_rejects_an_untrusted_s3_uri(self) -> None:
         result = handler.lambda_handler(
@@ -214,10 +230,7 @@ class SpawnTests(unittest.TestCase):
             patch.object(handler, "_launch_instance") as launch,
         ):
             result = handler.lambda_handler(
-                {
-                    "orchestrator_id": "orchestrator-1",
-                    "request_id": "stable-request-id",
-                },
+                self.spawn_event("stable-request-id"),
                 None,
             )
 
@@ -238,10 +251,7 @@ class SpawnTests(unittest.TestCase):
         ):
             with self.assertRaises(TimeoutError):
                 handler.lambda_handler(
-                    {
-                        "orchestrator_id": "orchestrator-1",
-                        "request_id": "ambiguous-request",
-                    },
+                    self.spawn_event("ambiguous-request"),
                     None,
                 )
 
@@ -267,10 +277,7 @@ class SpawnTests(unittest.TestCase):
         ):
             with self.assertRaises(ClientError):
                 handler.lambda_handler(
-                    {
-                        "orchestrator_id": "orchestrator-1",
-                        "request_id": "rejected-request",
-                    },
+                    self.spawn_event("rejected-request"),
                     None,
                 )
 

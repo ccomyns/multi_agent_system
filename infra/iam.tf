@@ -193,11 +193,6 @@ resource "aws_iam_role_policy" "orchestrator" {
         Resource = "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.codex_auth_ssm_parameter_name}"
       },
       {
-        Effect   = "Allow"
-        Action   = "s3:PutObject"
-        Resource = "${aws_s3_bucket.audit.arn}/stress-tests/*"
-      },
-      {
         Sid      = "ListAgentWorkspace"
         Effect   = "Allow"
         Action   = "s3:ListBucket"

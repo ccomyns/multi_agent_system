@@ -16,7 +16,6 @@ current implementation contains:
 - Separate S3 buckets for lifecycle audit records, durable global memory, and
   per-job agent workspaces.
 - EventBridge reconciliation when subagent instances terminate.
-- An on-demand, self-terminating orchestrator stress-test launch template.
 - A Next.js operations console.
 
 No infrastructure is created by cloning or building this repository.
@@ -94,7 +93,6 @@ each run and terminates it when the run is complete.
 ```text
 admin/                  Next.js admin console
 infra/                  Terraform configuration
-scripts/stress_test.py  Nine-call integration stress test
 src/subagent_manager/   Lambda implementation
 tests/                  Python unit tests
 ```
@@ -128,8 +126,7 @@ The user's policy spans DynamoDB (job table transactions and read access to
 subagent state), EC2 (`RunInstances`, `CreateTags`, `DescribeInstances`, and
 `TerminateInstances` limited to instances tagged `Role=orchestrator`), IAM
 (`PassRole` for the orchestrator instance profile, restricted to EC2), and S3
-(reading `jobs/*` in the agent-workspace bucket and `stress-tests/*` in the
-audit bucket).
+(read-only inspection of the system's data buckets).
 
 Use a supported Node.js LTS release. Node 24 is specified in `admin/.nvmrc`.
 
@@ -153,17 +150,6 @@ buckets and both DynamoDB tables. Set `AGENT_WORKSPACE_BUCKET_NAME`,
 `GLOBAL_MEMORY_BUCKET_NAME`, and `STATE_TABLE_NAME` from the corresponding
 Terraform outputs; it shares the jobs table and audit bucket settings above.
 The S3 and DynamoDB previews show at most the first 100 records per resource.
-
-To run the real concurrency stress test from the Testing page, copy
-`admin/.env.example` to `admin/.env.local`, set the deployed stress-test launch
-template ID/version, audit bucket, and AWS region, then change
-`STRESS_TESTS_ENABLED` to `true`. The Next.js server uses the standard AWS SDK
-credential chain, so no AWS credentials are sent to the browser. Its AWS
-identity needs permission to run and tag instances from the launch template,
-pass the template's instance role, describe the launched instance, and read
-and list `stress-tests/*` in the audit bucket. Keep this operations console
-behind authentication in any shared or deployed environment because a test
-launches billable EC2 instances.
 
 Frontend validation:
 
@@ -216,7 +202,7 @@ estimated cost have been reviewed.
 
 Applying this configuration builds two AMIs:
 
-- Orchestrator: Codex CLI, DuckDB CLI, and the Python stress-test harness.
+- Orchestrator: Codex CLI, DuckDB CLI, and the multi-agent runtime.
 - Subagent: Codex CLI, DuckDB CLI, Playwright, Chromium, and the S3-delivered
   task runner.
 
@@ -230,8 +216,8 @@ are separate so one can be rebuilt without unnecessarily rebuilding the other.
 The current versions are:
 
 ```hcl
-orchestrator_image_version = "1.0.6"
-agent_image_version        = "1.0.4"
+orchestrator_image_version = "1.0.7"
+agent_image_version        = "1.0.5"
 ```
 
 Increment `orchestrator_image_version` for orchestrator runtime or recipe
@@ -242,34 +228,6 @@ The AMI build creates temporary EC2 instances and persistent EBS-backed AMIs,
 so it takes longer and costs more than a configuration-only Terraform apply.
 Codex is installed but deliberately unauthenticated; API keys or sign-in tokens
 must be supplied securely at runtime and must never be baked into an AMI.
-
-## Stress Test
-
-Terraform provides a launch template instead of creating a test instance during
-`terraform apply`. Obtain the template ID and version after applying:
-
-```bash
-terraform output orchestrator_stress_test_launch_template_id
-terraform output orchestrator_stress_test_launch_template_version
-```
-
-The admin backend can pass those values to EC2 `RunInstances`. An instance
-launched from this template:
-
-- Starts one `t3.large` orchestrator.
-- Receives the test parameters and a stable orchestrator ID through instance tags.
-- Runs `run-subagent-stress-test` with those parameters.
-- Defaults in the admin UI to eight subagents and one `429` capacity rejection.
-- Writes the JSON report under the S3 stress-test prefix.
-- Shuts itself down; the launch template converts shutdown into EC2
-  termination.
-
-The eight accepted Lambda calls create `t3.large` subagents from the prebaked
-browser AMI in stress mode. Stress-mode calls deliberately omit task metadata,
-so those instances retain the TTL-only lifecycle instead of starting Codex.
-DynamoDB atomically records the counter and per-agent metadata before EC2 is
-called, then updates the item with the instance ID and launch state. EventBridge
-updates the records when the subagents terminate.
 
 ## Data Safety
 

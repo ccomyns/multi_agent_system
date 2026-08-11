@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Beaker, Bot, Sparkles } from "lucide-react";
+import { ArrowRight, Bot, Sparkles } from "lucide-react";
 import { useState } from "react";
 
 import { StatusBadge } from "@/components/status-badge";
@@ -24,10 +24,6 @@ export function RunDashboard({ run }: { run: ActiveRun }) {
       activeAgentCount: 0,
       agents: [],
     });
-  }
-
-  function launchBasicStressTest() {
-    setActiveRun(run);
   }
 
   return (
@@ -89,20 +85,6 @@ export function RunDashboard({ run }: { run: ActiveRun }) {
               </div>
             </form>
 
-            <div className="admin-tests">
-              <div>
-                <span className="admin-tests-label">Admin test utilities</span>
-                <p>Validate the eight-subagent concurrency boundary.</p>
-              </div>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={launchBasicStressTest}
-              >
-                <Beaker size={16} aria-hidden="true" />
-                Basic Stress Test
-              </button>
-            </div>
           </section>
         ) : (
           <>

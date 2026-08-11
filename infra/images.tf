@@ -113,71 +113,6 @@ resource "aws_imagebuilder_component" "agent_core" {
   })
 }
 
-resource "aws_imagebuilder_component" "orchestrator_stress_tools" {
-  name        = "${var.project_name}-orchestrator-stress-tools"
-  description = "Install the Python stress-test harness used by on-demand orchestrators."
-  platform    = "Linux"
-  version     = var.agent_image_version
-
-  data = yamlencode({
-    schemaVersion = 1.0
-    phases = [
-      {
-        name = "build"
-        steps = [
-          {
-            name   = "InstallStressTestHarness"
-            action = "ExecuteBash"
-            inputs = {
-              commands = [
-                <<-EOT
-                  set -euo pipefail
-                  install -d -m 0755 /opt/multi-agent
-                  python3 -m venv /opt/multi-agent/venv
-                  /opt/multi-agent/venv/bin/pip install --no-cache-dir --upgrade pip boto3
-
-                  echo "${filebase64("${path.module}/../scripts/stress_test.py")}" \
-                    | base64 --decode > /opt/multi-agent/stress_test.py
-                  chmod 0755 /opt/multi-agent/stress_test.py
-
-                  cat > /usr/local/bin/run-subagent-stress-test <<'SCRIPT'
-                  #!/bin/bash
-                  set -euo pipefail
-                  if [ -r /etc/multi-agent/orchestrator.env ]; then
-                    set -a
-                    source /etc/multi-agent/orchestrator.env
-                    set +a
-                  fi
-                  exec /opt/multi-agent/venv/bin/python \
-                    /opt/multi-agent/stress_test.py "$@"
-                  SCRIPT
-                  chmod 0755 /usr/local/bin/run-subagent-stress-test
-                EOT
-              ]
-            }
-          }
-        ]
-      },
-      {
-        name = "validate"
-        steps = [
-          {
-            name   = "ValidateStressTestHarness"
-            action = "ExecuteBash"
-            inputs = {
-              commands = [
-                "set -euo pipefail",
-                "/opt/multi-agent/venv/bin/python -c 'import boto3'",
-                "run-subagent-stress-test --help >/dev/null",
-              ]
-            }
-          }
-        ]
-      }
-    ]
-  })
-}
-
 resource "aws_imagebuilder_component" "orchestrator_runtime" {
   name        = "${var.project_name}-orchestrator-runtime"
   description = "Install the real job runner and its disabled-by-default systemd service."
@@ -274,7 +209,7 @@ resource "aws_imagebuilder_component" "orchestrator_runtime" {
                 "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/orchestrator_runner.py",
                 "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/spawn_agent_mcp.py",
                 "/opt/multi-agent/venv/bin/python -c 'from mcp.server.fastmcp import FastMCP'",
-                "cd /var/lib/multi-agent && runuser -u multi-agent -- codex sandbox linux -- /bin/true",
+                "cd /var/lib/multi-agent && runuser -u multi-agent -- codex sandbox -- /bin/true",
                 "test -x /opt/multi-agent/runtime/bin/spawn-agent-mcp",
                 "systemd-analyze verify /etc/systemd/system/multi-agent-orchestrator.service",
                 "test ! -e /etc/systemd/system/multi-user.target.wants/multi-agent-orchestrator.service",
@@ -450,7 +385,7 @@ resource "aws_imagebuilder_component" "subagent_runtime" {
                 "set -euo pipefail",
                 "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/subagent_runner.py",
                 "/opt/multi-agent/venv/bin/python -c 'import boto3'",
-                "cd /var/lib/multi-agent && runuser -u multi-agent -- codex sandbox linux -- /bin/true",
+                "cd /var/lib/multi-agent && runuser -u multi-agent -- codex sandbox -- /bin/true",
                 "test -x /opt/multi-agent/runtime/bin/run-subagent",
                 "systemd-analyze verify /etc/systemd/system/multi-agent-subagent.service",
                 "test ! -e /etc/systemd/system/multi-user.target.wants/multi-agent-subagent.service",
@@ -465,16 +400,12 @@ resource "aws_imagebuilder_component" "subagent_runtime" {
 
 resource "aws_imagebuilder_image_recipe" "orchestrator" {
   name         = "${var.project_name}-orchestrator"
-  description  = "Ubuntu orchestrator image with Codex CLI, DuckDB, and the stress-test harness."
+  description  = "Ubuntu orchestrator image with Codex CLI, DuckDB, and the multi-agent runtime."
   parent_image = data.aws_ami.ubuntu_2404.id
   version      = var.orchestrator_image_version
 
   component {
     component_arn = aws_imagebuilder_component.agent_core.arn
-  }
-
-  component {
-    component_arn = aws_imagebuilder_component.orchestrator_stress_tools.arn
   }
 
   component {

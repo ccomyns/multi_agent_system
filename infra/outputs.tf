@@ -1,5 +1,5 @@
 output "audit_bucket_name" {
-  description = "S3 bucket containing lifecycle and stress-test audit records."
+  description = "S3 bucket containing lifecycle audit records."
   value       = aws_s3_bucket.audit.id
 }
 
@@ -61,19 +61,4 @@ output "orchestrator_launch_template_id" {
 output "orchestrator_launch_template_version" {
   description = "Default version of the normal orchestrator launch template."
   value       = aws_launch_template.orchestrator.default_version
-}
-
-output "orchestrator_stress_test_launch_template_id" {
-  description = "Launch template for an on-demand, self-terminating concurrency stress test."
-  value       = aws_launch_template.orchestrator_stress_test.id
-}
-
-output "orchestrator_stress_test_launch_template_version" {
-  description = "Default version of the stress-test orchestrator launch template."
-  value       = aws_launch_template.orchestrator_stress_test.default_version
-}
-
-output "stress_test_results_prefix" {
-  description = "S3 location in which the caller writes its JSON report and boot log."
-  value       = "s3://${aws_s3_bucket.audit.id}/stress-tests/"
 }
