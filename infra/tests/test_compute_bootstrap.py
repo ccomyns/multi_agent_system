@@ -14,6 +14,10 @@ class SandboxDependencyTests(unittest.TestCase):
         self.assertIn("bwrap-userns-restrict", images)
         self.assertIn('echo "bubblewrap=$(bwrap --version)"', images)
         self.assertEqual(images.count("codex sandbox -- /bin/true"), 2)
+        self.assertEqual(
+            images.count("if [ ! -x /opt/multi-agent/venv/bin/python ]; then"), 2
+        )
+        self.assertIn("--upgrade pip boto3 'mcp>=1.27,<2'", images)
 
     def test_orchestrator_bootstrap_does_not_install_system_packages(self) -> None:
         compute = (Path(__file__).resolve().parents[1] / "compute.tf").read_text(

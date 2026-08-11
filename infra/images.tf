@@ -153,8 +153,12 @@ resource "aws_imagebuilder_component" "orchestrator_runtime" {
                     /var/lib/multi-agent /var/lib/multi-agent/jobs \
                     /var/lib/multi-agent/codex-home
 
+                  if [ ! -x /opt/multi-agent/venv/bin/python ]; then
+                    install -d -m 0755 /opt/multi-agent
+                    python3 -m venv /opt/multi-agent/venv
+                  fi
                   /opt/multi-agent/venv/bin/pip install --no-cache-dir \
-                    'mcp>=1.27,<2'
+                    --upgrade pip boto3 'mcp>=1.27,<2'
 
                   echo "${filesha256(data.archive_file.orchestrator_runtime.output_path)}  /tmp/orchestrator-runtime.zip" \
                     | sha256sum --check

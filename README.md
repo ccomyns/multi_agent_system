@@ -216,7 +216,7 @@ are separate so one can be rebuilt without unnecessarily rebuilding the other.
 The current versions are:
 
 ```hcl
-orchestrator_image_version = "1.0.7"
+orchestrator_image_version = "1.0.8"
 agent_image_version        = "1.0.5"
 ```
 
