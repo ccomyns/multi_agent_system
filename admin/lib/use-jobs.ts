@@ -2,7 +2,7 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 
-import type { JobsSnapshot } from "@/lib/jobs";
+import type { Job, JobsSnapshot } from "@/lib/jobs";
 import type { JobType } from "@/lib/jobs";
 import { fetchJobs, isActiveJob, requestJobEnd, requestJobLaunch } from "@/lib/jobs";
 
@@ -61,17 +61,21 @@ export function refreshJobs() {
   return inFlightRefresh;
 }
 
-export async function launchJob(originalTask: string, typeOfJob: JobType) {
+export async function launchJob(
+  originalTask: string,
+  typeOfJob: JobType,
+): Promise<Job | null> {
   updateStore({ pending: true, error: null });
   try {
-    await requestJobLaunch(originalTask, typeOfJob);
-    return true;
+    return await requestJobLaunch(originalTask, typeOfJob);
   } catch (caught) {
     updateStore({ error: describeError(caught, "The job could not be launched.") });
-    return false;
+    return null;
   } finally {
     updateStore({ pending: false });
-    await refreshJobs();
+    // The job-specific monitor owns its own polling, so do not delay navigation
+    // on a second history read after the launch request has already succeeded.
+    void refreshJobs();
   }
 }
 

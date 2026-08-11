@@ -3,6 +3,7 @@
 import { ArrowRight, Clock3, FolderOpen, SquarePen } from "lucide-react";
 import Link from "next/link";
 
+import { jobDetailHref } from "@/lib/jobs";
 import { useJobs } from "@/lib/use-jobs";
 
 export function JobHome() {
@@ -34,7 +35,10 @@ export function JobHome() {
       ) : null}
 
       <div className="job-choice-grid">
-        <Link className="job-choice-card" href="/jobs/new">
+        <Link
+          className="job-choice-card"
+          href={activeJob ? jobDetailHref(activeJob) : "/jobs/new"}
+        >
           <span className="job-choice-icon is-primary" aria-hidden="true">
             <SquarePen size={23} strokeWidth={1.8} />
           </span>

@@ -1,14 +1,16 @@
 "use client";
 
 import { ArrowUp, Bot, Database, Sparkles, Square } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
 import { StatusBadge } from "@/components/status-badge";
-import { DEFAULT_JOB_TYPE, jobTypeLabel } from "@/lib/jobs";
+import { DEFAULT_JOB_TYPE, jobDetailHref, jobTypeLabel } from "@/lib/jobs";
 import type { JobType } from "@/lib/jobs";
 import { useJobs } from "@/lib/use-jobs";
 
 export function JobComposer() {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [jobType, setJobType] = useState<JobType>(DEFAULT_JOB_TYPE);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -20,8 +22,10 @@ export function JobComposer() {
       return;
     }
 
-    if (await launch(originalTask, jobType)) {
+    const launchedJob = await launch(originalTask, jobType);
+    if (launchedJob) {
       setQuery("");
+      router.push(jobDetailHref(launchedJob));
     }
   }
 

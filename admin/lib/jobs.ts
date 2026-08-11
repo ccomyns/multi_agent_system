@@ -15,6 +15,13 @@ export function jobTypeLabel(type: JobType) {
   }
 }
 
+export function jobDetailHref(job: Pick<Job, "jobId" | "typeOfJob">) {
+  switch (job.typeOfJob) {
+    case "data_mining":
+      return `/jobs/${encodeURIComponent(job.jobId)}`;
+  }
+}
+
 export type Job = {
   jobId: string;
   originalTask: string;

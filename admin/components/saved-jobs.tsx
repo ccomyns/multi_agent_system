@@ -4,7 +4,7 @@ import { BriefcaseBusiness, Inbox } from "lucide-react";
 import Link from "next/link";
 
 import { StatusBadge } from "@/components/status-badge";
-import { jobTypeLabel } from "@/lib/jobs";
+import { jobDetailHref, jobTypeLabel } from "@/lib/jobs";
 import { useJobs } from "@/lib/use-jobs";
 
 export function SavedJobs() {
@@ -18,7 +18,10 @@ export function SavedJobs() {
           <h1>Saved Jobs</h1>
           <p>Original requests and lifecycle state for your research jobs.</p>
         </div>
-        <Link className="primary-button" href="/jobs/new">
+        <Link
+          className="primary-button"
+          href={activeJob ? jobDetailHref(activeJob) : "/jobs/new"}
+        >
           <BriefcaseBusiness size={15} aria-hidden="true" />
           {activeJob ? "View active job" : "Create a job"}
         </Link>
@@ -43,7 +46,11 @@ export function SavedJobs() {
       {jobs.length > 0 ? (
         <div className="saved-job-list">
           {jobs.map((job) => (
-            <article className="saved-job-card" key={job.jobId}>
+            <Link
+              className="saved-job-card saved-job-card-link"
+              href={jobDetailHref(job)}
+              key={job.jobId}
+            >
               <div className="saved-job-card-topline">
                 <span className="mono">{job.jobId}</span>
                 <StatusBadge status={job.status} />
@@ -62,7 +69,7 @@ export function SavedJobs() {
               <time dateTime={job.createdAt}>
                 Created {new Date(job.createdAt).toLocaleString()}
               </time>
-            </article>
+            </Link>
           ))}
         </div>
       ) : null}

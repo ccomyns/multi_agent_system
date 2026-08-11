@@ -1939,6 +1939,302 @@ tbody tr:hover {
   text-align: right;
 }
 
+.saved-job-card-link {
+  display: block;
+  text-decoration: none;
+}
+
+.saved-job-card-link:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+
+.data-mining-monitor-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 20px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 15%, rgb(226 238 253 / 72%), transparent 30rem),
+    #f8fafd;
+}
+
+.data-mining-monitor {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: minmax(220px, 1fr) minmax(340px, 2fr);
+  gap: 16px;
+}
+
+.data-mining-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  padding: 20px;
+  background: rgb(255 255 255 / 94%);
+  border: 1px solid var(--border-strong);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+}
+
+.data-mining-panel-label {
+  align-self: flex-start;
+  padding: 7px 11px;
+  color: #4b6380;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.075em;
+}
+
+.orchestrator-task {
+  max-height: 112px;
+  margin-top: 16px;
+  padding: 12px 15px;
+  overflow: auto;
+  color: var(--text);
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.orchestrator-task strong {
+  color: var(--text-strong);
+  font-weight: 750;
+}
+
+.orchestrator-failure,
+.monitor-refresh-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--red);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.orchestrator-failure svg {
+  flex: 0 0 auto;
+}
+
+.monitor-refresh-error {
+  color: var(--amber);
+}
+
+.orchestrator-panel-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: auto;
+  padding-top: 14px;
+}
+
+.orchestrator-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.orchestrator-progress-dot {
+  width: 9px;
+  height: 9px;
+  background: var(--amber);
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px rgb(198 140 23 / 12%);
+}
+
+.orchestrator-progress-dot.progress-coordinating_subagents {
+  background: var(--blue);
+  box-shadow: 0 0 0 4px rgb(47 111 179 / 12%);
+}
+
+.orchestrator-progress-dot.progress-done {
+  background: var(--green);
+  box-shadow: 0 0 0 4px rgb(24 121 78 / 12%);
+}
+
+.monitor-end-job {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 10px;
+}
+
+.subagent-panel {
+  padding-bottom: 14px;
+}
+
+.subagent-card-scroll {
+  min-height: 0;
+  flex: 1;
+  margin-top: 16px;
+  padding-right: 4px;
+  overflow-y: auto;
+}
+
+.subagent-card-grid {
+  display: grid;
+  min-height: 100%;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: minmax(142px, calc((100% - 14px) / 2));
+  gap: 14px;
+}
+
+.subagent-monitor-card {
+  display: flex;
+  min-width: 0;
+  min-height: 142px;
+  flex-direction: column;
+  padding: 15px;
+  overflow: hidden;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+}
+
+.subagent-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.subagent-card-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 11px;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-status-pill {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.025em;
+}
+
+.subagent-monitor-card > p {
+  display: -webkit-box;
+  margin-top: 12px;
+  overflow: hidden;
+  color: #3e5571;
+  font-size: 11px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.subagent-card-id {
+  display: block;
+  margin-top: auto;
+  padding-top: 10px;
+  overflow: hidden;
+  color: #8a99aa;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-card-error {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--red);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-running {
+  background: var(--green-soft);
+  border-color: #cbe9da;
+}
+
+.subagent-running .subagent-status-pill,
+.subagent-completed .subagent-status-pill {
+  color: var(--green);
+  border-color: #bfe1d0;
+}
+
+.subagent-provisioning,
+.subagent-queued {
+  background: var(--amber-soft);
+  border-color: #f0dda9;
+}
+
+.subagent-provisioning .subagent-status-pill,
+.subagent-queued .subagent-status-pill {
+  color: var(--amber);
+  border-color: #ead496;
+}
+
+.subagent-completed {
+  background: var(--blue-soft);
+  border-color: #cddff3;
+}
+
+.subagent-failed {
+  background: var(--red-soft);
+  border-color: #f1cccc;
+}
+
+.subagent-failed .subagent-status-pill {
+  color: var(--red);
+  border-color: #ebbbbb;
+}
+
+.subagent-terminated,
+.subagent-unknown {
+  background: #f0f4f8;
+  border-color: #d5dee8;
+}
+
+.subagent-empty-state {
+  display: grid;
+  min-height: 100%;
+  align-content: center;
+  justify-items: center;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.subagent-empty-state span {
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.subagent-empty-state p {
+  margin-top: 6px;
+  font-size: 10px;
+}
+
+@media (max-width: 1000px) {
+  .subagent-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 720px) {
   .brand-copy > span {
     display: none;
@@ -2131,6 +2427,31 @@ tbody tr:hover {
   .saved-jobs-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .data-mining-monitor-main {
+    padding: 14px;
+    overflow: auto;
+  }
+
+  .data-mining-monitor {
+    height: auto;
+    grid-template-rows: minmax(260px, auto) minmax(420px, auto);
+  }
+
+  .data-mining-panel {
+    padding: 16px;
+    border-radius: 18px;
+  }
+
+  .orchestrator-panel-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .subagent-card-grid {
+    grid-template-columns: 1fr;
+    grid-auto-rows: minmax(142px, auto);
   }
 
   .slide-builder-shell {

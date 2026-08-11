@@ -106,9 +106,14 @@ The console models exactly one active multi-agent run. It shows:
 - Active capacity against the eight-agent limit.
 - Searchable and filterable subagent assignments, instances, and activity.
 
-Launch a Job is backed by the jobs table through `/api/jobs`; the monitoring
-views still use typed mock data. AWS credentials stay on the Next.js server, so
-browser code never receives credentials or calls `RunInstances` directly.
+Launch a Job is backed by the jobs table through `/api/jobs`; the legacy root
+overview still uses typed mock data. AWS credentials stay on the Next.js server,
+so browser code never receives credentials or calls `RunInstances` directly.
+
+Successful data-mining launches navigate to `/jobs/<job_id>`. That page polls a
+server-side monitor endpoint which combines the job record, orchestrator EC2
+state, subagent state-table records, and job-scoped S3 artifacts. The browser
+receives only the normalized job and agent monitor data, never AWS credentials.
 
 Terraform creates a `<project>-admin-server` IAM user for this server, but it
 does **not** create access keys. Long-lived secrets must stay out of Terraform
