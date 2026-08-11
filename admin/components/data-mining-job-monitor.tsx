@@ -1,6 +1,7 @@
 "use client";
 
-import { AlertTriangle, Square } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Database, Square } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { fetchJobMonitor } from "@/lib/job-monitor";
@@ -9,7 +10,7 @@ import type {
   MonitoredSubagentStatus,
   OrchestratorProgress,
 } from "@/lib/job-monitor";
-import { requestJobEnd } from "@/lib/jobs";
+import { DEFAULT_JOB_TYPE, jobTypeLabel, requestJobEnd } from "@/lib/jobs";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -98,13 +99,29 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
 
   const progress = snapshot?.progress ?? "launching_orchestrator";
   const task = snapshot?.job.originalTask ?? "Loading the original task…";
+  const jobType = snapshot?.job.typeOfJob ?? DEFAULT_JOB_TYPE;
   const subagents = snapshot?.subagents ?? [];
   const jobIsActive =
     snapshot !== null &&
     (snapshot.job.status === "initializing" || snapshot.job.status === "running");
+  const jobIsSaved =
+    snapshot !== null &&
+    (snapshot.job.status === "completed" || snapshot.job.status === "failed");
 
   return (
     <div className="data-mining-monitor" aria-busy={snapshot === null}>
+      {jobIsSaved ? (
+        <Link className="data-mining-back-link" href="/jobs/saved">
+          <ArrowLeft size={12} strokeWidth={2} aria-hidden="true" />
+          BACK TO SAVED JOBS
+        </Link>
+      ) : null}
+
+      <div className="data-mining-panel-label data-mining-job-type">
+        <Database size={12} strokeWidth={2} aria-hidden="true" />
+        {jobTypeLabel(jobType).toUpperCase()}
+      </div>
+
       <section className="data-mining-panel orchestrator-panel" aria-labelledby="orchestrator-panel-label">
         <div className="data-mining-panel-label" id="orchestrator-panel-label">
           ORCHESTRATOR PANEL
@@ -149,7 +166,7 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
 
       <section className="data-mining-panel subagent-panel" aria-labelledby="subagent-panel-label">
         <div className="data-mining-panel-label" id="subagent-panel-label">
-          SUBAGENT BOX
+          SUBAGENT PANEL
         </div>
 
         <div className="subagent-card-scroll">
