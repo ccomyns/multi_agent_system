@@ -1,5 +1,4 @@
-import { FinalResultViewer } from "@/components/final-result-viewer";
-import { Sidebar } from "@/components/sidebar";
+import { redirect } from "next/navigation";
 
 export default async function FinalResultPage({
   params,
@@ -7,16 +6,5 @@ export default async function FinalResultPage({
   params: Promise<{ jobId: string }>;
 }) {
   const { jobId } = await params;
-
-  return (
-    <div className="app-shell app-layout">
-      <Sidebar />
-
-      <div className="app-body">
-        <main className="data-mining-result-main">
-          <FinalResultViewer jobId={jobId} />
-        </main>
-      </div>
-    </div>
-  );
+  redirect(`/jobs/${encodeURIComponent(jobId)}/orchestrator?view=result`);
 }

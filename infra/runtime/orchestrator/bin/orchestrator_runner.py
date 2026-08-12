@@ -18,6 +18,8 @@ from typing import Any
 
 import boto3
 
+from agent_telemetry import TelemetryRecorder
+
 
 LOG = logging.getLogger("orchestrator-runner")
 JOB_ID_PATTERN = re.compile(r"^job_[a-z0-9]{4,12}_[0-9a-f]{8}$")
@@ -106,12 +108,23 @@ class OrchestratorRun:
         self.s3 = boto3.client("s3", region_name=self.region)
         self.ssm = boto3.client("ssm", region_name=self.region)
 
+        self.telemetry = TelemetryRecorder(
+            s3=self.s3,
+            bucket=self.workspace_bucket,
+            prefix=f"jobs/{self.job_id}/orchestrator/telemetry",
+            local_dir=Path("/var/lib/multi-agent/telemetry") / self.job_id,
+            actor_type="orchestrator",
+            job_id=self.job_id,
+            orchestrator_instance_id=self.orchestrator_instance_id,
+        )
+
         self.original_auth = ""
 
     def prepare_directories(self) -> None:
         for directory in (self.workspace, self.codex_home, self.result_dir):
             directory.mkdir(parents=True, mode=0o700, exist_ok=True)
             os.chmod(directory, 0o700)
+        self.telemetry.prepare()
 
     def load_task(self) -> str:
         response = self.ddb.get_item(
@@ -266,7 +279,15 @@ approval_mode = "approve"
             "the research and the subagent datasets; do not omit relevant collected data. "
             "The file must be valid JSON containing an object or array."
         )
+        self.telemetry.record(
+            "codex_config_started",
+            "writing Codex configuration and orchestrator instructions",
+        )
         self.write_codex_config(developer_instructions)
+        self.telemetry.record(
+            "codex_config_finished",
+            "Codex configuration materialized",
+        )
 
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(self.codex_home)
@@ -277,6 +298,7 @@ approval_mode = "approve"
             "--ask-for-approval",
             "never",
             "exec",
+            "--json",
             "--model",
             self.orchestrator_model,
             "--sandbox",
@@ -291,18 +313,65 @@ approval_mode = "approve"
         ]
         LOG.info("starting Codex for job %s with model %s", self.job_id, self.orchestrator_model)
         self.codex_log.parent.mkdir(parents=True, exist_ok=True)
-        with self.codex_log.open("ab") as codex_log:
-            subprocess.run(
+        started_at = utc_now()
+        self.telemetry.record(
+            "codex_started",
+            "codex exec started",
+            codex_started_at=started_at,
+        )
+        with self.codex_log.open("ab", buffering=0) as codex_log:
+            process = subprocess.Popen(
                 command,
                 env=environment,
-                check=True,
-                stdout=codex_log,
-                stderr=subprocess.STDOUT,
+                stdout=subprocess.PIPE,
+                stderr=codex_log,
             )
+            if process.stdout is None:
+                raise RuntimeError("Codex JSON event stream was not available")
+            for raw_line in iter(process.stdout.readline, b""):
+                codex_log.write(raw_line)
+                event = self.telemetry.append_raw_event(
+                    raw_line.decode("utf-8", errors="replace")
+                )
+                self.record_subagent_tool_event(event)
+            return_code = process.wait()
 
+        finished_at = utc_now()
+        self.telemetry.record(
+            "codex_finished",
+            f"codex exit code {return_code}",
+            codex_finished_at=finished_at,
+            codex_exit_code=return_code,
+        )
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, command)
+
+        self.telemetry.record("output_validation_started", "validating orchestrator outputs")
         read_utf8(self.plan_file, MAX_TEXT_OUTPUT_BYTES, "plan.md")
         read_utf8(self.final_message, MAX_TEXT_OUTPUT_BYTES, "final.md")
         self.validate_final_result()
+        self.telemetry.record("output_validation_finished", "required outputs are valid")
+
+    def record_subagent_tool_event(self, event: dict[str, Any] | None) -> None:
+        if not event or event.get("type") not in {"item.started", "item.completed"}:
+            return
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "mcp_tool_call":
+            return
+        server = str(item.get("server") or item.get("server_name") or "")
+        tool = str(item.get("tool") or item.get("name") or "")
+        if "subagent" not in server.lower():
+            return
+        phase = "started" if event.get("type") == "item.started" else "finished"
+        checkpoint_name = {
+            "spawn_agent": "subagent_spawn",
+            "collect_agent_results": "subagent_collection",
+        }.get(tool, "subagent_tool_call")
+        status = item.get("status")
+        detail = f"{server}.{tool} {phase}"
+        if status:
+            detail += f" with status {status}"
+        self.telemetry.record(f"{checkpoint_name}_{phase}", detail)
 
     def validate_final_result(self) -> Any:
         raw = read_utf8(
@@ -522,18 +591,40 @@ def main() -> int:
     try:
         run = OrchestratorRun()
         run.prepare_directories()
+        run.telemetry.record("runner_started", "orchestrator runner started")
+        run.telemetry.record("task_load_started", "loading the job task from DynamoDB")
         task = run.load_task()
+        run.telemetry.record("task_load_finished", "job task loaded")
+        run.telemetry.record(
+            "codex_token_secret_load_started",
+            run.auth_parameter,
+        )
         run.install_auth()
+        run.telemetry.record(
+            "codex_token_secret_load_finished",
+            "Codex auth secret loaded and auth.json materialized",
+        )
         run.run_codex(task)
+        run.telemetry.record("final_artifact_sync_started", "syncing final artifacts")
         output_uris = run.upload_outputs()
         output_uris.update(run.upload_debug_artifacts())
-        run.finish_job("completed")
+        run.telemetry.record(
+            "final_artifact_sync_finished",
+            "final artifacts synced",
+        )
         try:
             run.persist_refreshed_auth()
         except Exception:
             LOG.exception("could not persist refreshed Codex authentication")
         output_uris["completion_marker_uri"] = run.terminal_marker_uri("completed")
+        run.telemetry.record(
+            "run_completed",
+            "job completed; publishing terminal status and marker",
+        )
+        run.telemetry.publish_raw_events(strict=True)
+        run.telemetry.publish(strict=True)
         run.upload_status("completed", **output_uris)
+        run.finish_job("completed")
         # The marker is deliberately the final S3 write before service exit/shutdown.
         run.upload_terminal_marker("completed")
         LOG.info("completed job %s; outputs=%s", run.job_id, output_uris)
@@ -541,6 +632,20 @@ def main() -> int:
     except Exception as error:
         LOG.exception("orchestrator job failed")
         if run is not None:
+            try:
+                telemetry_updates: dict[str, Any] = {}
+                if (
+                    run.telemetry.latest.get("codex_started_at")
+                    and not run.telemetry.latest.get("codex_finished_at")
+                ):
+                    telemetry_updates["codex_finished_at"] = utc_now()
+                run.telemetry.record(
+                    "run_failed",
+                    f"{type(error).__name__}: {str(error)[:500]}",
+                    **telemetry_updates,
+                )
+            except Exception:
+                LOG.exception("could not record orchestrator failure telemetry")
             try:
                 artifacts = run.upload_debug_artifacts(strict=False)
             except Exception as artifact_error:
@@ -559,6 +664,8 @@ def main() -> int:
             except Exception:
                 LOG.exception("could not persist refreshed Codex authentication")
             try:
+                run.telemetry.publish_raw_events(strict=False)
+                run.telemetry.publish(strict=False)
                 run.upload_status(
                     "failed",
                     error_type=type(error).__name__,

@@ -24,6 +24,7 @@ runner_path = (
     / "bin"
     / "subagent_runner.py"
 )
+sys.path.insert(0, str(runner_path.parent))
 runner_spec = importlib.util.spec_from_file_location("subagent_runner", runner_path)
 assert runner_spec and runner_spec.loader
 runner_module = importlib.util.module_from_spec(runner_spec)
@@ -59,6 +60,17 @@ class SubagentRunnerTests(unittest.TestCase):
         run.codex_log = root / "logs" / "codex.log"
         run.s3 = Mock()
         run.ssm = Mock()
+        run.telemetry = runner_module.TelemetryRecorder(
+            s3=run.s3,
+            bucket=run.workspace_bucket,
+            prefix=f"{run.agent_prefix}/telemetry",
+            local_dir=root / "telemetry",
+            actor_type="subagent",
+            job_id=run.job_id,
+            orchestrator_instance_id=run.orchestrator_instance_id,
+            agent_id=run.agent_id,
+            subagent_instance_id=run.subagent_instance_id,
+        )
         run.prepare_directories()
         run.bootstrap_log.parent.mkdir()
         run.bootstrap_log.write_text("cloud-init started\n", encoding="utf-8")
@@ -111,11 +123,16 @@ class SubagentRunnerTests(unittest.TestCase):
             def complete_codex(command, **kwargs):
                 run.summary_file.write_text("Work summary", encoding="utf-8")
                 run.results_file.write_text('{"records": [{"value": 42}]}', encoding="utf-8")
-                return Mock(returncode=0)
+                process = Mock()
+                process.stdout = io.BytesIO(
+                    b'{"type":"turn.completed","usage":{"input_tokens":200,"cached_input_tokens":50,"cache_write_input_tokens":0,"output_tokens":40,"reasoning_output_tokens":10}}\n'
+                )
+                process.wait.return_value = 0
+                return process
 
             with patch.object(
                 runner_module.subprocess,
-                "run",
+                "Popen",
                 side_effect=complete_codex,
             ) as call:
                 run.run_codex("Investigate revenue quality.")
@@ -126,8 +143,9 @@ class SubagentRunnerTests(unittest.TestCase):
             self.assertEqual(command[command.index("--cd") + 1], str(run.work_dir))
             self.assertNotIn("danger-full-access", command)
             self.assertEqual(call.call_args.kwargs["env"]["CODEX_HOME"], str(run.codex_home))
-            self.assertIs(call.call_args.kwargs["stderr"], runner_module.subprocess.STDOUT)
-            self.assertEqual(call.call_args.kwargs["stdout"].name, str(run.codex_log))
+            self.assertIn("--json", command)
+            self.assertIs(call.call_args.kwargs["stdout"], runner_module.subprocess.PIPE)
+            self.assertEqual(call.call_args.kwargs["stderr"].name, str(run.codex_log))
             self.assertEqual(
                 call.call_args.kwargs["env"]["TMPDIR"],
                 str(run.work_dir / "tmp"),
@@ -144,6 +162,7 @@ class SubagentRunnerTests(unittest.TestCase):
             self.assertIn('writable_roots = ["/summary"]', config)
             self.assertIn("network_access = true", config)
             self.assertIn("exclude_slash_tmp = true", config)
+            self.assertEqual(run.telemetry.latest["usage"]["total_tokens"], 240)
 
     def test_invalid_results_json_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -152,11 +171,38 @@ class SubagentRunnerTests(unittest.TestCase):
             def complete_codex(command, **kwargs):
                 run.summary_file.write_text("Work summary", encoding="utf-8")
                 run.results_file.write_text("not-json", encoding="utf-8")
-                return Mock(returncode=0)
+                process = Mock()
+                process.stdout = io.BytesIO(b'{"type":"turn.completed","usage":{}}\n')
+                process.wait.return_value = 0
+                return process
 
-            with patch.object(runner_module.subprocess, "run", side_effect=complete_codex):
+            with patch.object(runner_module.subprocess, "Popen", side_effect=complete_codex):
                 with self.assertRaisesRegex(RuntimeError, "valid UTF-8 JSON"):
                     run.run_codex("Investigate revenue quality.")
+
+    def test_token_count_events_update_live_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            run.telemetry.append_raw_event(
+                json.dumps(
+                    {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": {
+                                "input_tokens": 900,
+                                "cached_input_tokens": 500,
+                                "cache_write_input_tokens": 20,
+                                "output_tokens": 100,
+                                "reasoning_output_tokens": 40,
+                                "total_tokens": 1000,
+                            }
+                        },
+                    }
+                )
+            )
+
+            self.assertEqual(run.telemetry.latest["usage"]["total_tokens"], 1000)
+            self.assertEqual(run.telemetry.latest["usage"]["cached_input_tokens"], 500)
 
     def test_completion_marker_is_uploaded_last(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -1885,91 +1885,6 @@ tbody tr:hover {
   outline-offset: 3px;
 }
 
-.final-result-page {
-  position: relative;
-  display: flex;
-  flex: 1;
-  width: 100%;
-  min-width: 0;
-  min-height: 0;
-  align-items: flex-start;
-  flex-direction: column;
-  padding-top: 38px;
-}
-
-.final-result-viewer {
-  display: flex;
-  flex: 1;
-  width: 100%;
-  min-height: 0;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--surface);
-  border: 1px solid var(--blue);
-  border-radius: 22px;
-  box-shadow: 0 28px 80px rgb(16 40 70 / 28%);
-}
-
-.final-result-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 18px 20px;
-  color: #ffffff;
-  background: var(--blue);
-}
-
-.final-result-header span {
-  display: block;
-  margin-bottom: 3px;
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.075em;
-}
-
-.final-result-header h1 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 750;
-}
-
-.final-result-content {
-  min-height: 0;
-  flex: 1;
-  overflow-x: hidden;
-  overflow-y: auto;
-  background: #f7f9fc;
-}
-
-.final-result-content pre {
-  width: 100%;
-  min-width: 0;
-  margin: 0;
-  padding: 20px;
-  color: #172b46;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 11px;
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-.final-result-message {
-  display: grid;
-  min-height: 100%;
-  align-content: center;
-  justify-items: center;
-  gap: 14px;
-  padding: 32px;
-  color: var(--text-muted);
-  text-align: center;
-}
-
-.final-result-error {
-  color: var(--red);
-}
-
 .orchestrator-failure,
 .monitor-refresh-error {
   display: flex;
@@ -1996,6 +1911,25 @@ tbody tr:hover {
   gap: 18px;
   margin-top: auto;
   padding-top: 14px;
+}
+
+.orchestrator-progress-block {
+  display: grid;
+  gap: 7px;
+}
+
+.agent-compact-telemetry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.agent-compact-telemetry span + span::before {
+  margin-right: 12px;
+  content: "·";
 }
 
 .orchestrator-progress {
@@ -2062,6 +1996,18 @@ tbody tr:hover {
   background: var(--surface-muted);
   border: 1px solid var(--blue);
   border-radius: 22px;
+  cursor: pointer;
+  transition: box-shadow 140ms ease, transform 140ms ease;
+}
+
+.subagent-monitor-card:hover {
+  box-shadow: 0 12px 28px rgb(47 111 179 / 14%);
+  transform: translateY(-1px);
+}
+
+.subagent-monitor-card:focus-visible {
+  outline: 3px solid rgb(47 111 179 / 28%);
+  outline-offset: 2px;
 }
 
 .subagent-card-heading {
@@ -2113,6 +2059,264 @@ tbody tr:hover {
   font-size: 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.subagent-compact-telemetry {
+  margin-top: auto;
+  padding-top: 8px;
+  gap: 7px;
+}
+
+.subagent-compact-telemetry span + span::before {
+  margin-right: 7px;
+}
+
+.subagent-compact-telemetry + .subagent-card-id {
+  margin-top: 0;
+  padding-top: 5px;
+}
+
+.agent-detail-page {
+  position: relative;
+  display: flex;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  padding-top: 38px;
+}
+
+.agent-detail-viewer {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--blue);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+}
+
+.agent-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px 20px;
+  color: #ffffff;
+  background: var(--blue);
+}
+
+.agent-detail-header > div:first-child > span {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.075em;
+}
+
+.agent-detail-header h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.agent-detail-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.agent-detail-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  color: rgb(255 255 255 / 76%);
+  background: transparent;
+  border: 1px solid rgb(255 255 255 / 45%);
+  border-radius: 9px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.agent-detail-tabs button.is-active {
+  color: var(--blue-strong);
+  background: #ffffff;
+  border-color: #ffffff;
+}
+
+.agent-detail-tabs button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.agent-detail-content,
+.agent-detail-result {
+  min-height: 0;
+  flex: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: #f7f9fc;
+}
+
+.agent-detail-content {
+  padding: 20px;
+}
+
+.agent-detail-task {
+  padding: 12px 14px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--blue);
+  border-radius: 14px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.telemetry-summary-grid,
+.telemetry-token-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.telemetry-summary-grid > div,
+.telemetry-token-grid > div {
+  min-width: 0;
+  padding: 11px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+}
+
+.telemetry-summary-grid span,
+.telemetry-token-grid dt {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text-muted);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.telemetry-summary-grid strong,
+.telemetry-token-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.telemetry-section {
+  margin-top: 18px;
+}
+
+.telemetry-section h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.telemetry-section > p {
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.telemetry-timeline {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.telemetry-timeline li {
+  display: grid;
+  grid-template-columns: 175px minmax(0, 1fr) 34px;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.telemetry-timeline time,
+.telemetry-timeline li > span {
+  color: var(--text-muted);
+  font-size: 8px;
+}
+
+.telemetry-timeline li > span {
+  padding: 2px 4px;
+  color: var(--blue-strong);
+  background: var(--surface-blue);
+  border-radius: 5px;
+  font-weight: 750;
+  text-align: center;
+}
+
+.telemetry-timeline strong {
+  display: block;
+  color: var(--text-strong);
+  font-size: 10px;
+  text-transform: capitalize;
+}
+
+.telemetry-timeline p {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.agent-detail-result pre {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 20px;
+  color: #172b46;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.agent-detail-message {
+  display: grid;
+  min-height: 100%;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 28px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.agent-detail-error,
+.telemetry-refresh-warning {
+  color: var(--red);
+}
+
+.telemetry-refresh-warning {
+  margin-bottom: 12px;
+  font-size: 10px;
+}
+
+.telemetry-spin {
+  animation: data-mining-spin 900ms linear infinite;
 }
 
 .subagent-card-error {
@@ -2379,14 +2583,27 @@ tbody tr:hover {
     border-radius: 18px;
   }
 
-  .final-result-page {
-    align-items: flex-start;
+  .agent-detail-viewer {
+    min-height: 520px;
+    border-radius: 18px;
   }
 
-  .final-result-viewer {
-    height: auto;
-    min-height: 420px;
-    border-radius: 18px;
+  .agent-detail-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .telemetry-summary-grid,
+  .telemetry-token-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .telemetry-timeline li {
+    grid-template-columns: 1fr 34px;
+  }
+
+  .telemetry-timeline time {
+    grid-column: 1 / -1;
   }
 
   .orchestrator-panel-footer {

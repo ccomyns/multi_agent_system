@@ -18,6 +18,8 @@ from typing import Any
 
 import boto3
 
+from agent_telemetry import TelemetryRecorder
+
 
 LOG = logging.getLogger("subagent-runner")
 JOB_ID_PATTERN = re.compile(r"^job_[a-z0-9]{4,12}_[0-9a-f]{8}$")
@@ -101,6 +103,17 @@ class SubagentRun:
 
         self.s3 = boto3.client("s3", region_name=self.region)
         self.ssm = boto3.client("ssm", region_name=self.region)
+        self.telemetry = TelemetryRecorder(
+            s3=self.s3,
+            bucket=self.workspace_bucket,
+            prefix=f"{self.agent_prefix}/telemetry",
+            local_dir=Path("/var/lib/multi-agent/telemetry") / self.agent_id,
+            actor_type="subagent",
+            job_id=self.job_id,
+            orchestrator_instance_id=self.orchestrator_instance_id,
+            agent_id=self.agent_id,
+            subagent_instance_id=self.subagent_instance_id,
+        )
 
     def prepare_directories(self) -> None:
         for directory in (
@@ -112,6 +125,7 @@ class SubagentRun:
         ):
             directory.mkdir(parents=True, mode=0o700, exist_ok=True)
             os.chmod(directory, 0o700)
+        self.telemetry.prepare()
 
     def download_task(self) -> dict[str, Any]:
         response = self.s3.get_object(
@@ -205,7 +219,9 @@ exclude_tmpdir_env_var = true
         os.chmod(destination, 0o600)
 
     def run_codex(self, task: str) -> None:
+        self.telemetry.record("codex_config_started", "writing Codex configuration")
         self.write_codex_config()
+        self.telemetry.record("codex_config_finished", "Codex configuration materialized")
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(self.codex_home)
         environment["TMPDIR"] = str(self.work_dir / "tmp")
@@ -217,6 +233,7 @@ exclude_tmpdir_env_var = true
             "--ask-for-approval",
             "never",
             "exec",
+            "--json",
             "--model",
             self.model,
             "--sandbox",
@@ -231,15 +248,37 @@ exclude_tmpdir_env_var = true
         ]
         LOG.info("starting Codex for agent %s with model %s", self.agent_id, self.model)
         self.codex_log.parent.mkdir(parents=True, exist_ok=True)
-        with self.codex_log.open("ab") as codex_log:
-            subprocess.run(
+        started_at = utc_now()
+        self.telemetry.record(
+            "codex_started",
+            "codex exec started",
+            codex_started_at=started_at,
+        )
+        with self.codex_log.open("ab", buffering=0) as codex_log:
+            process = subprocess.Popen(
                 command,
                 env=environment,
-                check=True,
-                stdout=codex_log,
-                stderr=subprocess.STDOUT,
+                stdout=subprocess.PIPE,
+                stderr=codex_log,
             )
+            if process.stdout is None:
+                raise RuntimeError("Codex JSON event stream was not available")
+            for raw_line in iter(process.stdout.readline, b""):
+                codex_log.write(raw_line)
+                self.telemetry.append_raw_event(raw_line.decode("utf-8", errors="replace"))
+            return_code = process.wait()
 
+        finished_at = utc_now()
+        self.telemetry.record(
+            "codex_finished",
+            f"codex exit code {return_code}",
+            codex_finished_at=finished_at,
+            codex_exit_code=return_code,
+        )
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, command)
+
+        self.telemetry.record("output_validation_started", "validating subagent outputs")
         size_limits = {
             self.summary_file: MAX_SUMMARY_BYTES,
             self.results_file: MAX_RESULTS_BYTES,
@@ -269,6 +308,7 @@ exclude_tmpdir_env_var = true
             raise RuntimeError(f"{self.results_file} must contain valid UTF-8 JSON") from error
         if not isinstance(parsed_results, (dict, list)):
             raise RuntimeError(f"{self.results_file} must contain a JSON object or array")
+        self.telemetry.record("output_validation_finished", "required outputs are valid")
 
     def upload_data_outputs(self) -> dict[str, str]:
         destinations = {
@@ -420,12 +460,28 @@ def main() -> int:
     try:
         run = SubagentRun()
         run.prepare_directories()
+        run.telemetry.record("runner_started", "subagent runner started")
+        run.telemetry.record("task_load_started", "downloading input.json from S3")
         task_spec = run.download_task()
+        run.telemetry.record("task_load_finished", "input.json downloaded and validated")
+        run.telemetry.record("codex_token_secret_load_started", run.auth_parameter)
         run.install_auth()
+        run.telemetry.record(
+            "codex_token_secret_load_finished",
+            "Codex auth secret loaded and auth.json materialized",
+        )
         run.run_codex(task_spec["task"])
+        run.telemetry.record("final_artifact_sync_started", "syncing final artifacts")
         outputs = run.upload_data_outputs()
         outputs.update(run.upload_debug_artifacts())
+        run.telemetry.record("final_artifact_sync_finished", "final artifacts synced")
         outputs["completion_marker_uri"] = run.terminal_marker_uri("completed")
+        run.telemetry.record(
+            "run_completed",
+            "subagent completed; publishing terminal status and marker",
+        )
+        run.telemetry.publish_raw_events(strict=True)
+        run.telemetry.publish(strict=True)
         run.upload_status("completed", **outputs)
         # This is deliberately the final S3 write. Exiting the service triggers
         # instance shutdown only after the durable artifact bundle is complete.
@@ -436,6 +492,20 @@ def main() -> int:
         LOG.exception("subagent run failed")
         if run is not None:
             try:
+                telemetry_updates: dict[str, Any] = {}
+                if (
+                    run.telemetry.latest.get("codex_started_at")
+                    and not run.telemetry.latest.get("codex_finished_at")
+                ):
+                    telemetry_updates["codex_finished_at"] = utc_now()
+                run.telemetry.record(
+                    "run_failed",
+                    f"{type(error).__name__}: {str(error)[:500]}",
+                    **telemetry_updates,
+                )
+            except Exception:
+                LOG.exception("could not record subagent failure telemetry")
+            try:
                 artifacts = run.upload_debug_artifacts(strict=False)
             except Exception as artifact_error:
                 LOG.exception("could not upload subagent debugging artifacts")
@@ -445,6 +515,8 @@ def main() -> int:
                     ]
                 }
             try:
+                run.telemetry.publish_raw_events(strict=False)
+                run.telemetry.publish(strict=False)
                 run.upload_status(
                     "failed",
                     error_type=type(error).__name__,

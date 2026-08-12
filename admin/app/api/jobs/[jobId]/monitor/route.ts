@@ -9,6 +9,7 @@ import {
 import { NextResponse } from "next/server";
 
 import { awsClientOptions } from "@/lib/aws";
+import { parseTelemetrySummary } from "@/lib/agent-telemetry";
 import type {
   JobMonitorSnapshot,
   MonitoredSubagent,
@@ -57,6 +58,7 @@ type AgentArtifacts = {
   inputKey: string | null;
   completedStatusKey: string | null;
   failedStatusKey: string | null;
+  telemetryLatestKey: string | null;
 };
 
 function json(data: unknown, init?: ResponseInit) {
@@ -217,20 +219,30 @@ function collectArtifacts(jobId: string, keys: string[]) {
       continue;
     }
     const relative = parts.join("/");
-    if (!["input.json", "status/completed.json", "status/failed.json"].includes(relative)) {
+    if (
+      ![
+        "input.json",
+        "status/completed.json",
+        "status/failed.json",
+        "telemetry/latest.json",
+      ].includes(relative)
+    ) {
       continue;
     }
     const artifacts = byAgent.get(agentId) ?? {
       inputKey: null,
       completedStatusKey: null,
       failedStatusKey: null,
+      telemetryLatestKey: null,
     };
     if (relative === "input.json") {
       artifacts.inputKey = key;
     } else if (relative === "status/completed.json") {
       artifacts.completedStatusKey = key;
-    } else {
+    } else if (relative === "status/failed.json") {
       artifacts.failedStatusKey = key;
+    } else {
+      artifacts.telemetryLatestKey = key;
     }
     byAgent.set(agentId, artifacts);
   }
@@ -286,6 +298,7 @@ async function buildSubagents(
         inputKey: taskKeyFromUri(item.task_s3_uri, bucket),
         completedStatusKey: null,
         failedStatusKey: null,
+        telemetryLatestKey: null,
       };
       artifactsByAgent.set(agentId, artifacts);
     }
@@ -294,9 +307,10 @@ async function buildSubagents(
   const subagents = await Promise.all(
     [...artifactsByAgent.entries()].map(async ([agentId, artifacts]) => {
       const item = itemByAgent.get(agentId);
-      const [input, failure] = await Promise.all([
+      const [input, failure, telemetry] = await Promise.all([
         readJsonObject(s3, bucket, artifacts.inputKey),
         readJsonObject(s3, bucket, artifacts.failedStatusKey),
+        readJsonObject(s3, bucket, artifacts.telemetryLatestKey),
       ]);
       const status = mapSubagentStatus(item?.state, artifacts);
       const result: MonitoredSubagent = {
@@ -309,6 +323,7 @@ async function buildSubagents(
         launchedAt: stringValue(item?.launched_at),
         terminatedAt: stringValue(item?.terminated_at),
         error: stringValue(failure?.error) ?? stringValue(item?.failure_reason),
+        telemetry: parseTelemetrySummary(telemetry),
       };
       return result;
     }),
@@ -348,6 +363,7 @@ function progressFor(
   job: Job,
   ec2State: string | null,
   hasSubagentInput: boolean,
+  codexStartedAt: string | null,
 ): { progress: OrchestratorProgress; isTerminal: boolean; stoppedUnexpectedly: boolean } {
   const jobFinished = job.status === "completed" || job.status === "failed";
   const stoppedUnexpectedly =
@@ -362,7 +378,7 @@ function progressFor(
       stoppedUnexpectedly: false,
     };
   }
-  if (ec2State === "running") {
+  if (codexStartedAt) {
     return { progress: "making_plan", isTerminal: false, stoppedUnexpectedly: false };
   }
   return {
@@ -411,12 +427,18 @@ export async function GET(
       return errorResponse("That job type does not use the data-mining monitor.", 409);
     }
 
-    const [ec2State, objectKeys, agentItems] = await Promise.all([
+    const [ec2State, objectKeys, agentItems, orchestratorTelemetryRecord] = await Promise.all([
       describeOrchestrator(ec2, job.orchestratorInstanceId),
       listAgentObjectKeys(s3, config.workspaceBucket, jobId),
       queryAgentItems(documents, config.stateTable, job.orchestratorInstanceId),
+      readJsonObject(
+        s3,
+        config.workspaceBucket,
+        `jobs/${jobId}/orchestrator/telemetry/latest.json`,
+      ),
     ]);
     const artifacts = collectArtifacts(jobId, objectKeys);
+    const orchestratorTelemetry = parseTelemetrySummary(orchestratorTelemetryRecord);
     const subagents = await buildSubagents(
       s3,
       config.workspaceBucket,
@@ -427,6 +449,7 @@ export async function GET(
       job,
       ec2State,
       [...artifacts.values()].some((item) => item.inputKey !== null),
+      orchestratorTelemetry?.codexStartedAt ?? null,
     );
 
     let orchestratorError: string | null = null;
@@ -448,6 +471,7 @@ export async function GET(
       progress: progress.progress,
       orchestratorEc2State: ec2State,
       orchestratorError,
+      orchestratorTelemetry,
       isTerminal: progress.isTerminal,
       subagents,
     };

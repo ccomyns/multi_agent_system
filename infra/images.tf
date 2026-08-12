@@ -67,7 +67,7 @@ resource "aws_imagebuilder_component" "agent_core" {
                   echo "$node_checksum  /tmp/$node_archive" | sha256sum --check
                   tar -xJf "/tmp/$node_archive" -C /usr/local --strip-components=1
 
-                  npm install --global @openai/codex@latest
+                  npm install --global "@openai/codex@${var.codex_cli_version}"
 
                   curl -fsSL https://install.duckdb.org -o /tmp/install-duckdb.sh
                   HOME=/root sh /tmp/install-duckdb.sh
@@ -211,6 +211,7 @@ resource "aws_imagebuilder_component" "orchestrator_runtime" {
               commands = [
                 "set -euo pipefail",
                 "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/orchestrator_runner.py",
+                "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/agent_telemetry.py",
                 "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/spawn_agent_mcp.py",
                 "/opt/multi-agent/venv/bin/python -c 'from mcp.server.fastmcp import FastMCP'",
                 "cd /var/lib/multi-agent && runuser -u multi-agent -- codex sandbox -- /bin/true",
@@ -388,6 +389,7 @@ resource "aws_imagebuilder_component" "subagent_runtime" {
               commands = [
                 "set -euo pipefail",
                 "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/subagent_runner.py",
+                "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/agent_telemetry.py",
                 "/opt/multi-agent/venv/bin/python -c 'import boto3'",
                 "cd /var/lib/multi-agent && runuser -u multi-agent -- codex sandbox -- /bin/true",
                 "test -x /opt/multi-agent/runtime/bin/run-subagent",

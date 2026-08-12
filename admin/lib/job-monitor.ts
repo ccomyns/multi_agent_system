@@ -1,5 +1,6 @@
 import { isJob } from "@/lib/jobs";
 import type { Job } from "@/lib/jobs";
+import type { AgentTelemetrySummary } from "@/lib/agent-telemetry";
 
 export type OrchestratorProgress =
   | "launching_orchestrator"
@@ -26,6 +27,7 @@ export type MonitoredSubagent = {
   launchedAt: string | null;
   terminatedAt: string | null;
   error: string | null;
+  telemetry: AgentTelemetrySummary | null;
 };
 
 export type JobMonitorSnapshot = {
@@ -33,6 +35,7 @@ export type JobMonitorSnapshot = {
   progress: OrchestratorProgress;
   orchestratorEc2State: string | null;
   orchestratorError: string | null;
+  orchestratorTelemetry: AgentTelemetrySummary | null;
   isTerminal: boolean;
   subagents: MonitoredSubagent[];
 };
@@ -58,6 +61,10 @@ function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
 }
 
+function isNullableTelemetry(value: unknown): value is AgentTelemetrySummary | null {
+  return value === null || (typeof value === "object" && value !== null);
+}
+
 function isMonitoredSubagent(value: unknown): value is MonitoredSubagent {
   return (
     typeof value === "object" &&
@@ -79,7 +86,9 @@ function isMonitoredSubagent(value: unknown): value is MonitoredSubagent {
     "terminatedAt" in value &&
     isNullableString(value.terminatedAt) &&
     "error" in value &&
-    isNullableString(value.error)
+    isNullableString(value.error) &&
+    "telemetry" in value &&
+    isNullableTelemetry(value.telemetry)
   );
 }
 
@@ -95,6 +104,8 @@ export function isJobMonitorSnapshot(value: unknown): value is JobMonitorSnapsho
     isNullableString(value.orchestratorEc2State) &&
     "orchestratorError" in value &&
     isNullableString(value.orchestratorError) &&
+    "orchestratorTelemetry" in value &&
+    isNullableTelemetry(value.orchestratorTelemetry) &&
     "isTerminal" in value &&
     typeof value.isTerminal === "boolean" &&
     "subagents" in value &&

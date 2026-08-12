@@ -11,6 +11,7 @@ import type {
   MonitoredSubagentStatus,
   OrchestratorProgress,
 } from "@/lib/job-monitor";
+import type { AgentTelemetrySummary } from "@/lib/agent-telemetry";
 import { DEFAULT_JOB_TYPE, jobTypeLabel, requestJobEnd } from "@/lib/jobs";
 
 const POLL_INTERVAL_MS = 3000;
@@ -34,6 +35,37 @@ const SUBAGENT_STATUS_LABELS: Record<MonitoredSubagentStatus, string> = {
 
 function describeError(caught: unknown, fallback: string) {
   return caught instanceof Error ? caught.message : fallback;
+}
+
+function localClock(value: string) {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : parsed.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+}
+
+function elapsed(start: string, finish: string | null) {
+  const startMs = new Date(start).getTime();
+  const finishMs = finish ? new Date(finish).getTime() : Date.now();
+  if (!Number.isFinite(startMs) || !Number.isFinite(finishMs)) return null;
+  const seconds = Math.max(0, Math.floor((finishMs - startMs) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+}
+
+function telemetryFacts(telemetry: AgentTelemetrySummary | null, failed: boolean) {
+  const total = telemetry?.usage.totalTokens;
+  const tokenText = total === null || total === undefined
+    ? "Tokens pending"
+    : `${total.toLocaleString()} tokens`;
+  if (!telemetry?.codexStartedAt) {
+    return { tokenText, timingText: "Codex not started" };
+  }
+  const runtime = elapsed(telemetry.codexStartedAt, telemetry.codexFinishedAt);
+  if (telemetry.codexFinishedAt || failed) {
+    return { tokenText, timingText: `${failed ? "Failed · " : "Runtime "}${runtime ?? "unavailable"}` };
+  }
+  return { tokenText, timingText: `Started ${localClock(telemetry.codexStartedAt)}` };
 }
 
 export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
@@ -99,11 +131,8 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
     }
   }
 
-  function viewFinalResult() {
-    if (!jobIsSaved) {
-      return;
-    }
-    router.push(`/jobs/${encodeURIComponent(jobId)}/result`);
+  function viewOrchestrator() {
+    router.push(`/jobs/${encodeURIComponent(jobId)}/orchestrator`);
   }
 
   if (snapshot === null) {
@@ -124,6 +153,10 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
     (snapshot.job.status === "initializing" || snapshot.job.status === "running");
   const jobIsSaved =
     (snapshot.job.status === "completed" || snapshot.job.status === "failed");
+  const orchestratorFacts = telemetryFacts(
+    snapshot.orchestratorTelemetry,
+    snapshot.job.status === "failed",
+  );
 
   return (
     <div className="data-mining-monitor">
@@ -140,25 +173,17 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
       </div>
 
       <section
-        className={
-          jobIsSaved
-            ? "data-mining-panel orchestrator-panel is-result-viewable"
-            : "data-mining-panel orchestrator-panel"
-        }
+        className="data-mining-panel orchestrator-panel is-result-viewable"
         aria-labelledby="orchestrator-panel-label"
-        onClick={jobIsSaved ? viewFinalResult : undefined}
-        onKeyDown={
-          jobIsSaved
-            ? (event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  viewFinalResult();
-                }
-              }
-            : undefined
-        }
-        role={jobIsSaved ? "link" : undefined}
-        tabIndex={jobIsSaved ? 0 : undefined}
+        onClick={viewOrchestrator}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            viewOrchestrator();
+          }
+        }}
+        role="link"
+        tabIndex={0}
       >
         <div className="data-mining-panel-label" id="orchestrator-panel-label">
           ORCHESTRATOR PANEL
@@ -182,16 +207,27 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
         ) : null}
 
         <div className="orchestrator-panel-footer">
-          <div className="orchestrator-progress" aria-live="polite">
-            <span className={`orchestrator-progress-dot progress-${progress}`} aria-hidden="true" />
-            {PROGRESS_LABELS[progress]}
+          <div className="orchestrator-progress-block">
+            <div className="orchestrator-progress" aria-live="polite">
+              <span className={`orchestrator-progress-dot progress-${progress}`} aria-hidden="true" />
+              {PROGRESS_LABELS[progress]}
+            </div>
+            <div className="agent-compact-telemetry">
+              <span>{orchestratorFacts.timingText}</span>
+              <span>{orchestratorFacts.tokenText}</span>
+            </div>
           </div>
 
           {jobIsActive ? (
             <button
               type="button"
               className="secondary-button monitor-end-job"
-              onClick={() => void endJob()}
+              onClick={(event) => {
+                event.stopPropagation();
+                void endJob();
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
               disabled={ending}
             >
               <Square size={12} strokeWidth={2.2} aria-hidden="true" />
@@ -214,11 +250,21 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
             </div>
           ) : (
             <div className="subagent-card-grid" aria-live="polite">
-              {subagents.map((subagent, index) => (
+              {subagents.map((subagent, index) => {
+                const facts = telemetryFacts(subagent.telemetry, subagent.status === "failed");
+                return (
                 <article
                   className={`subagent-monitor-card subagent-${subagent.status}`}
                   key={subagent.agentId}
                   title={subagent.task}
+                  role="link"
+                  tabIndex={0}
+                  onClick={() => router.push(`/jobs/${encodeURIComponent(jobId)}/agents/${encodeURIComponent(subagent.agentId)}`)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      router.push(`/jobs/${encodeURIComponent(jobId)}/agents/${encodeURIComponent(subagent.agentId)}`);
+                    }
+                  }}
                 >
                   <div className="subagent-card-heading">
                     <strong>Subagent {index + 1}</strong>
@@ -227,12 +273,17 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
                     </span>
                   </div>
                   <p>{subagent.task}</p>
+                  <div className="agent-compact-telemetry subagent-compact-telemetry">
+                    <span>{facts.timingText}</span>
+                    <span>{facts.tokenText}</span>
+                  </div>
                   <span className="subagent-card-id mono">{subagent.agentId}</span>
                   {subagent.error ? (
                     <span className="subagent-card-error">{subagent.error}</span>
                   ) : null}
                 </article>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

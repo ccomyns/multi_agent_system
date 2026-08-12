@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import sys
 import tempfile
@@ -37,6 +38,7 @@ runner_path = (
     / "bin"
     / "orchestrator_runner.py"
 )
+sys.path.insert(0, str(runner_path.parent))
 runner_spec = importlib.util.spec_from_file_location("orchestrator_runner", runner_path)
 assert runner_spec and runner_spec.loader
 runner_module = importlib.util.module_from_spec(runner_spec)
@@ -64,6 +66,15 @@ class OrchestratorRunnerTests(unittest.TestCase):
         run.codex_log = root / "logs" / "codex.log"
         run.workspace_bucket = "agent-workspace-bucket"
         run.s3 = Mock()
+        run.telemetry = runner_module.TelemetryRecorder(
+            s3=run.s3,
+            bucket=run.workspace_bucket,
+            prefix=f"jobs/{run.job_id}/orchestrator/telemetry",
+            local_dir=root / "telemetry",
+            actor_type="orchestrator",
+            job_id=run.job_id,
+            orchestrator_instance_id=run.orchestrator_instance_id,
+        )
         run.mcp_command = root / "spawn-agent-mcp"
         run.documentation_dir = root / "documentation"
         run.documentation_dir.mkdir()
@@ -98,9 +109,14 @@ class OrchestratorRunnerTests(unittest.TestCase):
 
             def complete_codex(command, **kwargs):
                 self.write_codex_outputs(run)
-                return Mock(returncode=0)
+                process = Mock()
+                process.stdout = io.BytesIO(
+                    b'{"type":"turn.completed","usage":{"input_tokens":120,"cached_input_tokens":80,"cache_write_input_tokens":0,"output_tokens":30,"reasoning_output_tokens":5}}\n'
+                )
+                process.wait.return_value = 0
+                return process
 
-            with patch.object(runner_module.subprocess, "run", side_effect=complete_codex) as call:
+            with patch.object(runner_module.subprocess, "Popen", side_effect=complete_codex) as call:
                 run.run_codex(task)
 
             command = call.call_args.args[0]
@@ -109,8 +125,9 @@ class OrchestratorRunnerTests(unittest.TestCase):
             self.assertEqual(command[command.index("--sandbox") + 1], "workspace-write")
             self.assertEqual(command[-1], task)
             self.assertEqual(call.call_args.kwargs["env"]["CODEX_HOME"], str(run.codex_home))
-            self.assertIs(call.call_args.kwargs["stderr"], runner_module.subprocess.STDOUT)
-            self.assertEqual(call.call_args.kwargs["stdout"].name, str(run.codex_log))
+            self.assertIn("--json", command)
+            self.assertIs(call.call_args.kwargs["stdout"], runner_module.subprocess.PIPE)
+            self.assertEqual(call.call_args.kwargs["stderr"].name, str(run.codex_log))
             self.assertEqual(
                 call.call_args.kwargs["env"]["ORCHESTRATOR_WORKSPACE"],
                 str(run.workspace),
@@ -147,12 +164,14 @@ class OrchestratorRunnerTests(unittest.TestCase):
                 (run.workspace / "documentation" / "DATABASE.md").read_text(encoding="utf-8"),
                 "Database navigation",
             )
+            self.assertEqual(run.telemetry.latest["usage"]["total_tokens"], 150)
+            self.assertTrue(run.telemetry.raw_events_file.is_file())
 
     def test_missing_spawn_agent_server_fails_before_codex(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run = self.make_run(Path(temporary))
             run.mcp_command.unlink()
-            with patch.object(runner_module.subprocess, "run") as call:
+            with patch.object(runner_module.subprocess, "Popen") as call:
                 with self.assertRaisesRegex(RuntimeError, "spawn_agent MCP executable is missing"):
                     run.run_codex("Investigate a market.")
             call.assert_not_called()
@@ -167,9 +186,12 @@ class OrchestratorRunnerTests(unittest.TestCase):
                     "not-json",
                     encoding="utf-8",
                 )
-                return Mock(returncode=0)
+                process = Mock()
+                process.stdout = io.BytesIO(b'{"type":"turn.completed","usage":{}}\n')
+                process.wait.return_value = 0
+                return process
 
-            with patch.object(runner_module.subprocess, "run", side_effect=complete_codex):
+            with patch.object(runner_module.subprocess, "Popen", side_effect=complete_codex):
                 with self.assertRaisesRegex(RuntimeError, "valid JSON"):
                     run.run_codex("Investigate a market.")
 
