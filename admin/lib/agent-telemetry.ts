@@ -30,6 +30,7 @@ export type AgentTelemetryResponse = {
   agentId: string | null;
   task: string;
   status: string;
+  error?: string | null;
   isTerminal: boolean;
   telemetry: AgentTelemetrySummary | null;
   events: AgentTelemetryEvent[];
@@ -153,6 +154,7 @@ export function isAgentTelemetryResponse(value: unknown): value is AgentTelemetr
       (record.agentId === null || typeof record.agentId === "string") &&
       typeof record.task === "string" &&
       typeof record.status === "string" &&
+      (!("error" in record) || record.error === null || typeof record.error === "string") &&
       typeof record.isTerminal === "boolean" &&
       (record.telemetry === null || isClientTelemetry(record.telemetry)) &&
       Array.isArray(record.events) &&

@@ -23,6 +23,19 @@ function response(data: unknown, init?: ResponseInit) {
   return result;
 }
 
+function errorFromStatus(text: string | null) {
+  if (!text) return null;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === "object" && parsed !== null && "error" in parsed &&
+      typeof parsed.error === "string"
+      ? parsed.error
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(
   _request: Request,
   context: { params: Promise<{ jobId: string; agentId: string }> },
@@ -104,6 +117,8 @@ export async function GET(
       agentId,
       task: typeof input?.task === "string" ? input.task : "Task unavailable",
       status,
+      error: errorFromStatus(failedStatus) ??
+        (typeof agent?.failure_reason === "string" ? agent.failure_reason : null),
       isTerminal: terminal || job.status === "completed" || job.status === "failed",
       telemetry: telemetry.telemetry,
       events: mergeTelemetryEvents(telemetry.events, [

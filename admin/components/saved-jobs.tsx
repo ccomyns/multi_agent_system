@@ -1,6 +1,6 @@
 "use client";
 
-import { BriefcaseBusiness, Inbox } from "lucide-react";
+import { BriefcaseBusiness, Database, Inbox } from "lucide-react";
 import Link from "next/link";
 
 import { StatusBadge } from "@/components/status-badge";
@@ -52,22 +52,18 @@ export function SavedJobs() {
               key={job.jobId}
             >
               <div className="saved-job-card-topline">
-                <span className="mono">{job.jobId}</span>
+                <span className="job-type-button is-selected saved-job-type-badge">
+                  <Database size={12} strokeWidth={2} aria-hidden="true" />
+                  {jobTypeLabel(job.typeOfJob)}
+                </span>
                 <StatusBadge status={job.status} />
               </div>
               <p>{job.originalTask}</p>
-              <dl className="saved-job-card-facts">
-                <div>
-                  <dt>Job type</dt>
-                  <dd>{jobTypeLabel(job.typeOfJob)}</dd>
-                </div>
-                <div>
-                  <dt>Orchestrator instance</dt>
-                  <dd className="mono">{job.orchestratorInstanceId ?? "null"}</dd>
-                </div>
-              </dl>
-              <time dateTime={job.createdAt}>
-                Created {new Date(job.createdAt).toLocaleString()}
+              <time className="saved-job-card-date" dateTime={job.createdAt}>
+                {new Date(job.createdAt).toLocaleString(undefined, {
+                  dateStyle: "long",
+                  timeStyle: "short",
+                })}
               </time>
             </Link>
           ))}

@@ -201,6 +201,12 @@ export function AgentTelemetryDetail({
           <div className="agent-detail-content">
             {error ? <div className="telemetry-refresh-warning">{error} Retrying automatically.</div> : null}
             <div className="agent-detail-task"><strong>Task:</strong> {payload.task}</div>
+            {payload.error ? (
+              <div className="agent-detail-run-error" role="alert">
+                <strong>Run error</strong>
+                <p>{payload.error}</p>
+              </div>
+            ) : null}
             <div className="telemetry-summary-grid">
               <div><span>Status</span><strong>{payload.status}</strong></div>
               <div><span>Codex started</span><strong>{localTime(telemetry?.codexStartedAt ?? null)}</strong></div>

@@ -915,22 +915,19 @@ h1 {
   line-height: 1.5;
 }
 
-.job-record-facts,
-.saved-job-card-facts {
+.job-record-facts {
   display: grid;
   gap: 6px;
   margin: 14px 0 0;
 }
 
-.job-record-facts > div,
-.saved-job-card-facts > div {
+.job-record-facts > div {
   display: flex;
   align-items: baseline;
   gap: 10px;
 }
 
-.job-record-facts dt,
-.saved-job-card-facts dt {
+.job-record-facts dt {
   flex: 0 0 88px;
   color: #8b99aa;
   font-size: 10px;
@@ -939,8 +936,7 @@ h1 {
   text-transform: uppercase;
 }
 
-.job-record-facts dd,
-.saved-job-card-facts dd {
+.job-record-facts dd {
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--text);
@@ -949,10 +945,6 @@ h1 {
 
 .job-end-button {
   margin-top: 18px;
-}
-
-.saved-job-card-facts {
-  margin-top: 12px;
 }
 
 .saved-job-failure {
@@ -1072,12 +1064,14 @@ h1 {
 
 .saved-job-card-topline {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
   margin-bottom: 13px;
-  color: var(--text-muted);
-  font-size: 10px;
+}
+
+.saved-job-type-badge {
+  cursor: inherit;
 }
 
 .saved-job-card > p {
@@ -1086,11 +1080,12 @@ h1 {
   line-height: 1.55;
 }
 
-.saved-job-card time {
+.saved-job-card-date {
   display: block;
   margin-top: 12px;
-  color: #8b99aa;
+  color: var(--text-muted);
   font-size: 10px;
+  font-weight: 650;
 }
 
 .task-card {
@@ -1997,12 +1992,11 @@ tbody tr:hover {
   border: 1px solid var(--blue);
   border-radius: 22px;
   cursor: pointer;
-  transition: box-shadow 140ms ease, transform 140ms ease;
+  transition: box-shadow 140ms ease;
 }
 
 .subagent-monitor-card:hover {
   box-shadow: 0 12px 28px rgb(47 111 179 / 14%);
-  transform: translateY(-1px);
 }
 
 .subagent-monitor-card:focus-visible {
@@ -2050,17 +2044,6 @@ tbody tr:hover {
   -webkit-line-clamp: 3;
 }
 
-.subagent-card-id {
-  display: block;
-  margin-top: auto;
-  padding-top: 10px;
-  overflow: hidden;
-  color: #8a99aa;
-  font-size: 8px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .subagent-compact-telemetry {
   margin-top: auto;
   padding-top: 8px;
@@ -2069,11 +2052,6 @@ tbody tr:hover {
 
 .subagent-compact-telemetry span + span::before {
   margin-right: 7px;
-}
-
-.subagent-compact-telemetry + .subagent-card-id {
-  margin-top: 0;
-  padding-top: 5px;
 }
 
 .agent-detail-page {
@@ -2175,6 +2153,23 @@ tbody tr:hover {
   border-radius: 14px;
   font-size: 11px;
   line-height: 1.5;
+}
+
+.agent-detail-run-error {
+  margin-top: 12px;
+  padding: 12px 14px;
+  color: var(--red);
+  background: var(--red-soft);
+  border: 1px solid #f1cccc;
+  border-radius: 12px;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.agent-detail-run-error strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 10px;
 }
 
 .telemetry-summary-grid,
@@ -2317,16 +2312,6 @@ tbody tr:hover {
 
 .telemetry-spin {
   animation: data-mining-spin 900ms linear infinite;
-}
-
-.subagent-card-error {
-  display: block;
-  margin-top: 5px;
-  overflow: hidden;
-  color: var(--red);
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .subagent-running {

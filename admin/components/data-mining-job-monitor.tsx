@@ -277,10 +277,6 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
                     <span>{facts.timingText}</span>
                     <span>{facts.tokenText}</span>
                   </div>
-                  <span className="subagent-card-id mono">{subagent.agentId}</span>
-                  {subagent.error ? (
-                    <span className="subagent-card-error">{subagent.error}</span>
-                  ) : null}
                 </article>
                 );
               })}
