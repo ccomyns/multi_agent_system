@@ -4,14 +4,12 @@ import {
   BriefcaseBusiness,
   Database,
   Layers3,
-  Network,
   Presentation,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const NAV_ITEMS = [
-  { href: "/", label: "Multi Agent System", Icon: Network },
   { href: "/jobs", label: "Launch a Job", Icon: BriefcaseBusiness },
   { href: "/database", label: "Database Management", Icon: Database },
   { href: "/slides", label: "Slide Deck Builder", Icon: Presentation },
@@ -22,7 +20,7 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <Link className="brand" href="/" aria-label="Research Control home">
+      <Link className="brand" href="/jobs" aria-label="Research Control home">
         <span className="brand-mark" aria-hidden="true">
           <Layers3 size={19} strokeWidth={1.8} />
         </span>
@@ -35,7 +33,7 @@ export function Sidebar() {
       <nav className="sidebar-nav" aria-label="Primary">
         {NAV_ITEMS.map(({ href, label, Icon }) => {
           const isActive =
-            pathname === href || (href !== "/" && pathname.startsWith(`${href}/`));
+            pathname === href || pathname.startsWith(`${href}/`);
           return (
             <Link
               key={href}

@@ -38,16 +38,3 @@ export type ActiveRun = {
   orchestrator: OrchestratorInstance;
   agents: Subagent[];
 };
-
-export type MonitorTabId = "mon" | "data" | "infra";
-
-export type MonitorTab = {
-  id: MonitorTabId;
-  label: string;
-};
-
-export type MonitorSubagentStep = {
-  id: string;
-  name: string;
-  description: string;
-};
