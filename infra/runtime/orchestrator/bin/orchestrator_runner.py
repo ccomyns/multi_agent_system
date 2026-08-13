@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import mimetypes
 import os
 import re
@@ -15,6 +16,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import boto3
 
@@ -33,6 +35,9 @@ ANCHOR_CONTENT_TYPES = {
     ".xls": "application/vnd.ms-excel",
     ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
 }
+DATA_MINING_COLUMN_TYPES = {"text", "number", "boolean", "date", "url"}
+DATA_MINING_IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+DATA_MINING_DATE_PATTERN = re.compile(r"^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$")
 
 
 def required_env(name: str) -> str:
@@ -70,6 +75,195 @@ def read_utf8(path: Path, size_limit: int, label: str) -> str:
     if not value.strip():
         raise RuntimeError(f"{label} must not be blank")
     return value
+
+
+def _valid_result_date(value: str) -> bool:
+    match = DATA_MINING_DATE_PATTERN.fullmatch(value)
+    if not match:
+        return False
+    year = int(match.group(1))
+    month = int(match.group(2)) if match.group(2) else None
+    day = int(match.group(3)) if match.group(3) else None
+    if year < 1:
+        return False
+    if month is None:
+        return True
+    if month < 1 or month > 12:
+        return False
+    if day is None:
+        return True
+    try:
+        datetime(year, month, day)
+    except ValueError:
+        return False
+    return True
+
+
+def _valid_result_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+        return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
+    except ValueError:
+        return False
+
+
+def _valid_result_cell(value: Any, column: dict[str, Any]) -> bool:
+    if value is None:
+        return column["nullable"]
+    column_type = column["type"]
+    if column_type == "text":
+        return isinstance(value, str)
+    if column_type == "number":
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+        )
+    if column_type == "boolean":
+        return isinstance(value, bool)
+    if column_type == "date":
+        return isinstance(value, str) and _valid_result_date(value)
+    if column_type == "url":
+        return isinstance(value, str) and _valid_result_url(value)
+    return False
+
+
+def _result_key_token(value: Any) -> tuple[type[Any], Any]:
+    return type(value), value
+
+
+def data_mining_schema_error(draft: Any) -> str | None:
+    """Return a brief schema error without affecting valid-JSON publication."""
+    if not isinstance(draft, dict):
+        return "the result is not a database-result object"
+    if set(draft) != {"kind", "schema_version", "tables", "relationships"}:
+        return "the database-result envelope has an invalid shape"
+    if draft.get("kind") != "data_mining_result" or draft.get("schema_version") != 1:
+        return "the result does not use data-mining result schema version 1"
+    raw_tables = draft.get("tables")
+    raw_relationships = draft.get("relationships")
+    if not isinstance(raw_tables, list) or not 1 <= len(raw_tables) <= 2:
+        return "a database result must contain one or two tables"
+    if not isinstance(raw_relationships, list):
+        return "the database result has no relationships array"
+
+    tables: list[dict[str, Any]] = []
+    table_ids: set[str] = set()
+    for table_index, table in enumerate(raw_tables, start=1):
+        location = f"table {table_index}"
+        if not isinstance(table, dict):
+            return f"{location} is not an object"
+        if set(table) != {"id", "name", "primary_key", "columns", "rows"}:
+            return f"{location} has an invalid shape"
+        table_id = table.get("id")
+        if not isinstance(table_id, str) or not DATA_MINING_IDENTIFIER_PATTERN.fullmatch(table_id):
+            return f"{location} has an invalid id"
+        if table_id in table_ids:
+            return f"table id {table_id} is duplicated"
+        table_ids.add(table_id)
+        if not isinstance(table.get("name"), str) or not table["name"].strip():
+            return f"{location} has no name"
+        primary_key = table.get("primary_key")
+        if not isinstance(primary_key, str) or not primary_key:
+            return f"{location} has no primary key"
+        raw_columns = table.get("columns")
+        raw_rows = table.get("rows")
+        if not isinstance(raw_columns, list) or not raw_columns:
+            return f"{location} has no columns"
+        if not isinstance(raw_rows, list):
+            return f"{location} has no rows array"
+
+        columns: list[dict[str, Any]] = []
+        column_keys: set[str] = set()
+        for column_index, column in enumerate(raw_columns, start=1):
+            column_location = f"{location}, column {column_index}"
+            if not isinstance(column, dict):
+                return f"{column_location} is not an object"
+            if set(column) != {"key", "label", "type", "nullable", "hidden"}:
+                return f"{column_location} has an invalid shape"
+            key = column.get("key")
+            if not isinstance(key, str) or not DATA_MINING_IDENTIFIER_PATTERN.fullmatch(key):
+                return f"{column_location} has an invalid key"
+            if key in column_keys:
+                return f"{location} has duplicate column {key}"
+            column_keys.add(key)
+            if not isinstance(column.get("label"), str) or not column["label"].strip():
+                return f"{column_location} has no label"
+            if column.get("type") not in DATA_MINING_COLUMN_TYPES:
+                return f"{column_location} has an unsupported type"
+            if not isinstance(column.get("nullable"), bool) or not isinstance(
+                column.get("hidden"), bool
+            ):
+                return f"{column_location} has invalid display metadata"
+            columns.append(column)
+
+        columns_by_key = {column["key"]: column for column in columns}
+        primary_column = columns_by_key.get(primary_key)
+        if primary_column is None:
+            return f"{location}'s primary key is not a declared column"
+        if primary_column["nullable"]:
+            return f"{location}'s primary key must be non-nullable"
+        if not any(not column["hidden"] for column in columns):
+            return f"{location} has no visible columns"
+
+        primary_values: set[tuple[type[Any], Any]] = set()
+        for row_index, row in enumerate(raw_rows, start=1):
+            row_location = f"{location}, row {row_index}"
+            if not isinstance(row, dict) or set(row) != column_keys:
+                return f"{row_location} does not exactly match the declared columns"
+            for column in columns:
+                if not _valid_result_cell(row[column["key"]], column):
+                    return f"{row_location} has an invalid {column['label']} value"
+            token = _result_key_token(row[primary_key])
+            if token in primary_values:
+                return f"{location} has a duplicate primary-key value"
+            primary_values.add(token)
+
+        tables.append(
+            {
+                "id": table_id,
+                "primary_key": primary_key,
+                "columns": columns_by_key,
+                "rows": raw_rows,
+            }
+        )
+
+    if (len(tables) == 1 and raw_relationships) or (
+        len(tables) == 2 and not raw_relationships
+    ):
+        return "relationships must be empty for one table and present for two tables"
+
+    tables_by_id = {table["id"]: table for table in tables}
+    relationship_keys = {"from_table", "from_column", "to_table", "to_column"}
+    for relationship_index, relationship in enumerate(raw_relationships, start=1):
+        location = f"relationship {relationship_index}"
+        if not isinstance(relationship, dict) or set(relationship) != relationship_keys:
+            return f"{location} has an invalid shape"
+        if not all(isinstance(relationship[key], str) for key in relationship_keys):
+            return f"{location} has invalid table or column identifiers"
+        from_table = tables_by_id.get(relationship["from_table"])
+        to_table = tables_by_id.get(relationship["to_table"])
+        if from_table is None or to_table is None or from_table is to_table:
+            return f"{location} does not connect the two result tables"
+        from_column = from_table["columns"].get(relationship["from_column"])
+        to_column = to_table["columns"].get(relationship["to_column"])
+        if (
+            from_column is None
+            or to_column is None
+            or relationship["to_column"] != to_table["primary_key"]
+            or from_column["type"] != to_column["type"]
+        ):
+            return f"{location} does not reference compatible key columns"
+        target_values = {
+            _result_key_token(row[relationship["to_column"]]) for row in to_table["rows"]
+        }
+        if any(
+            row[relationship["from_column"]] is not None
+            and _result_key_token(row[relationship["from_column"]]) not in target_values
+            for row in from_table["rows"]
+        ):
+            return f"{location} contains an orphaned foreign key"
+    return None
 
 
 class OrchestratorRun:
@@ -346,9 +540,12 @@ approval_mode = "approve"
             "is read-only for this orchestrator and all subagents; do not attempt to "
             "create, update, or delete objects there. Before finishing, create "
             "final_result.json in the orchestrator workspace containing all aggregated "
-            "data needed to answer the task. Choose the JSON structure that best represents "
-            "the research and the subagent datasets; do not omit relevant collected data. "
-            "The file must be valid JSON containing an object or array."
+            "data needed to answer the task. This is a data-mining job: read and follow "
+            "documentation/DATA_MINING_RESULT_SCHEMA.md. Prefer its standardized one- or "
+            "two-table result format so the admin UI can display the result as a database. "
+            "Preserve the table and column order requested by the user and do not add visible "
+            "research columns the user did not request. The file must be valid JSON containing "
+            "an object or array."
         )
         self.telemetry.record(
             "codex_config_started",
@@ -456,6 +653,25 @@ approval_mode = "approve"
             raise RuntimeError("final_result.json must contain valid JSON") from error
         if not isinstance(draft, (dict, list)):
             raise RuntimeError("final_result.json must contain a JSON object or array")
+        try:
+            schema_error = data_mining_schema_error(draft)
+        except Exception as error:
+            # Structural classification selects the UI view and must never turn
+            # an otherwise valid JSON artifact into a failed job.
+            schema_error = f"schema classification could not complete: {type(error).__name__}"
+        try:
+            if schema_error is None:
+                self.telemetry.record(
+                    "final_result_schema_database",
+                    "final_result.json matches data-mining result schema version 1",
+                )
+            else:
+                self.telemetry.record(
+                    "final_result_schema_json_fallback",
+                    schema_error,
+                )
+        except Exception:
+            LOG.exception("could not record non-fatal final-result schema classification")
         return draft
 
     def upload_outputs(self) -> dict[str, str]:

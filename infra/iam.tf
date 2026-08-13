@@ -289,10 +289,9 @@ resource "aws_iam_user" "admin_server" {
   name = "${var.project_name}-admin-server"
 }
 
-resource "aws_iam_user_policy" "admin_server" {
-  name = "launch-and-track-jobs"
-  user = aws_iam_user.admin_server.name
-
+resource "aws_iam_policy" "admin_server" {
+  name        = "${var.project_name}-admin-server"
+  description = "Permissions used by the admin server to launch and inspect research jobs."
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -394,4 +393,9 @@ resource "aws_iam_user_policy" "admin_server" {
       }
     ]
   })
+}
+
+resource "aws_iam_user_policy_attachment" "admin_server" {
+  user       = aws_iam_user.admin_server.name
+  policy_arn = aws_iam_policy.admin_server.arn
 }

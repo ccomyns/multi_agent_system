@@ -138,7 +138,8 @@ class OrchestratorRunnerTests(unittest.TestCase):
             self.assertIn("You have been given the following task", config)
             self.assertIn("create a plan.md file", config)
             self.assertIn("create final_result.json", config)
-            self.assertIn("Choose the JSON structure", config)
+            self.assertIn("DATA_MINING_RESULT_SCHEMA.md", config)
+            self.assertIn("standardized one- or two-table result format", config)
             self.assertIn("active_subagent_limit_reached", config)
             self.assertIn("A subagent should have ownership over a single URL", config)
             self.assertNotIn("A trusted anchor-data file is available", config)
@@ -170,6 +171,163 @@ class OrchestratorRunnerTests(unittest.TestCase):
             )
             self.assertEqual(run.telemetry.latest["usage"]["total_tokens"], 150)
             self.assertTrue(run.telemetry.raw_events_file.is_file())
+            self.assertIn(
+                '"checkpoint":"final_result_schema_json_fallback"',
+                run.telemetry.events_file.read_text(encoding="utf-8"),
+            )
+
+    def test_schema_compliant_result_is_classified_for_database_view(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            run.final_result.write_text(
+                json.dumps(
+                    {
+                        "kind": "data_mining_result",
+                        "schema_version": 1,
+                        "tables": [
+                            {
+                                "id": "companies",
+                                "name": "Companies",
+                                "primary_key": "company_id",
+                                "columns": [
+                                    {
+                                        "key": "company_id",
+                                        "label": "Company ID",
+                                        "type": "text",
+                                        "nullable": False,
+                                        "hidden": True,
+                                    },
+                                    {
+                                        "key": "name",
+                                        "label": "Name",
+                                        "type": "text",
+                                        "nullable": False,
+                                        "hidden": False,
+                                    },
+                                    {
+                                        "key": "website_url",
+                                        "label": "Website",
+                                        "type": "url",
+                                        "nullable": True,
+                                        "hidden": False,
+                                    },
+                                ],
+                                "rows": [
+                                    {
+                                        "company_id": "company_0001",
+                                        "name": "Example Corp",
+                                        "website_url": None,
+                                    }
+                                ],
+                            }
+                        ],
+                        "relationships": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            parsed = run.validate_final_result()
+
+            self.assertEqual(parsed["kind"], "data_mining_result")
+            self.assertEqual(
+                run.telemetry.latest["current_checkpoint"],
+                "final_result_schema_database",
+            )
+
+    def test_structurally_invalid_result_remains_publishable_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            arbitrary_result = {"companies": [{"name": "Example Corp"}]}
+            run.final_result.write_text(json.dumps(arbitrary_result), encoding="utf-8")
+
+            parsed = run.validate_final_result()
+
+            self.assertEqual(parsed, arbitrary_result)
+            self.assertEqual(
+                run.telemetry.latest["current_checkpoint"],
+                "final_result_schema_json_fallback",
+            )
+
+    def test_two_table_schema_requires_referential_integrity(self) -> None:
+        result = {
+            "kind": "data_mining_result",
+            "schema_version": 1,
+            "tables": [
+                {
+                    "id": "pe_firms",
+                    "name": "PE Firms",
+                    "primary_key": "pe_firm_id",
+                    "columns": [
+                        {
+                            "key": "pe_firm_id",
+                            "label": "PE Firm ID",
+                            "type": "text",
+                            "nullable": False,
+                            "hidden": True,
+                        },
+                        {
+                            "key": "name",
+                            "label": "Name",
+                            "type": "text",
+                            "nullable": False,
+                            "hidden": False,
+                        },
+                    ],
+                    "rows": [{"pe_firm_id": "pe_0001", "name": "Example Capital"}],
+                },
+                {
+                    "id": "portfolio_companies",
+                    "name": "Portfolio Companies",
+                    "primary_key": "company_id",
+                    "columns": [
+                        {
+                            "key": "company_id",
+                            "label": "Company ID",
+                            "type": "text",
+                            "nullable": False,
+                            "hidden": True,
+                        },
+                        {
+                            "key": "pe_firm_id",
+                            "label": "PE Firm ID",
+                            "type": "text",
+                            "nullable": False,
+                            "hidden": True,
+                        },
+                        {
+                            "key": "name",
+                            "label": "Name",
+                            "type": "text",
+                            "nullable": False,
+                            "hidden": False,
+                        },
+                    ],
+                    "rows": [
+                        {
+                            "company_id": "company_0001",
+                            "pe_firm_id": "pe_0001",
+                            "name": "Example Corp",
+                        }
+                    ],
+                },
+            ],
+            "relationships": [
+                {
+                    "from_table": "portfolio_companies",
+                    "from_column": "pe_firm_id",
+                    "to_table": "pe_firms",
+                    "to_column": "pe_firm_id",
+                }
+            ],
+        }
+
+        self.assertIsNone(runner_module.data_mining_schema_error(result))
+        result["tables"][1]["rows"][0]["pe_firm_id"] = "missing"
+        self.assertIn(
+            "orphaned foreign key",
+            runner_module.data_mining_schema_error(result),
+        )
 
     def test_private_anchor_file_is_loaded_and_downloaded_to_input_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

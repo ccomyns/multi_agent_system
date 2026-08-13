@@ -150,6 +150,11 @@ to 25 MB and stored at the private `jobs/<job_id>/input/anchor-data` key in the 
 workspace bucket. Only the orchestrator can download the raw file; it passes
 the values needed for each anchor record to subagents in successive batches.
 
+Completed data-mining jobs preferentially publish a versioned one- or two-table
+JSON result. The orchestrator detail page renders compliant results as a
+read-only, paginated spreadsheet with table tabs. Any other valid JSON result
+still completes normally and is displayed in a formatted JSON fallback view.
+
 To launch real jobs, copy `admin/.env.example` to `admin/.env.local` and set
 `JOBS_TABLE_NAME`, `ORCHESTRATOR_LAUNCH_TEMPLATE_ID`,
 `ORCHESTRATOR_LAUNCH_TEMPLATE_VERSION`, `AUDIT_BUCKET_NAME`, and `AWS_REGION`
@@ -227,8 +232,8 @@ are separate so one can be rebuilt without unnecessarily rebuilding the other.
 The current versions are:
 
 ```hcl
-orchestrator_image_version = "1.0.8"
-agent_image_version        = "1.0.5"
+orchestrator_image_version = "1.0.10"
+agent_image_version        = "1.0.6"
 ```
 
 Increment `orchestrator_image_version` for orchestrator runtime or recipe

@@ -4,8 +4,11 @@ import { ArrowLeft, Clock3, Database, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { DataMiningResultViewer } from "@/components/data-mining-result-viewer";
 import { isAgentTelemetryResponse } from "@/lib/agent-telemetry";
 import type { AgentTelemetryResponse, TokenUsage } from "@/lib/agent-telemetry";
+import { isFinalResultResponse } from "@/lib/data-mining-result";
+import type { FinalResultResponse } from "@/lib/data-mining-result";
 
 const POLL_INTERVAL_MS = 3000;
 type DetailView = "telemetry" | "result";
@@ -64,17 +67,14 @@ async function fetchFinalResult(jobId: string, signal?: AbortSignal) {
     cache: "no-store",
     signal,
   });
-  const body = await response.text();
+  const payload: unknown = await response.json();
   if (!response.ok) {
-    let message = `Final result request failed (${response.status}).`;
-    try {
-      message = responseError(JSON.parse(body), message);
-    } catch {
-      // Keep the HTTP fallback for a non-JSON response.
-    }
-    throw new Error(message);
+    throw new Error(responseError(payload, `Final result request failed (${response.status}).`));
   }
-  return body;
+  if (!isFinalResultResponse(payload)) {
+    throw new Error("The admin server returned an unexpected final-result response.");
+  }
+  return payload;
 }
 
 function TokenBreakdown({ usage }: { usage: TokenUsage }) {
@@ -109,7 +109,7 @@ export function AgentTelemetryDetail({
 }) {
   const [view, setView] = useState<DetailView>(agentId ? "telemetry" : initialView);
   const [payload, setPayload] = useState<AgentTelemetryResponse | null>(null);
-  const [result, setResult] = useState<string | null>(null);
+  const [result, setResult] = useState<FinalResultResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resultError, setResultError] = useState<string | null>(null);
 
@@ -190,7 +190,7 @@ export function AgentTelemetryDetail({
         {view === "result" ? (
           <div className="agent-detail-result">
             {resultError ? <div className="agent-detail-message agent-detail-error">{resultError}</div> :
-              result === null ? <div className="agent-detail-message">Loading final_result.json…</div> : <pre>{result}</pre>}
+              result === null ? <div className="agent-detail-message">Loading final_result.json…</div> : <DataMiningResultViewer response={result} />}
           </div>
         ) : payload === null ? (
           <div className="agent-detail-message">

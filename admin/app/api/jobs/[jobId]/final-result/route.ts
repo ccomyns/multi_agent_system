@@ -4,6 +4,7 @@ import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { NextResponse } from "next/server";
 
 import { awsClientOptions } from "@/lib/aws";
+import { validateDataMiningResult } from "@/lib/data-mining-result";
 import { DEFAULT_JOB_TYPE, isJobType, JOB_ID_PATTERN } from "@/lib/jobs";
 
 export const runtime = "nodejs";
@@ -98,14 +99,16 @@ export async function GET(
       return errorResponse("The published final_result.json file is empty.", 422);
     }
 
-    return new Response(body, {
-      status: 200,
-      headers: {
-        "Cache-Control": "no-store",
-        "Content-Type": "application/json; charset=utf-8",
-        "Content-Disposition": `inline; filename="${jobId}-final_result.json"`,
-      },
-    });
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return errorResponse("The published final_result.json file is not valid JSON.", 422);
+    }
+    const validation = validateDataMiningResult(parsed);
+    return validation.valid
+      ? json({ view: "database", result: validation.result })
+      : json({ view: "json", result: parsed, schemaError: validation.error });
   } catch (error) {
     console.error(`Final result read failed for ${jobId}`, error);
     return errorResponse(

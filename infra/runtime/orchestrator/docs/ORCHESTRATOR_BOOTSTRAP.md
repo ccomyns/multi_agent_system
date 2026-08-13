@@ -83,12 +83,12 @@ for adding data to global memory.
 
 ## Final result
 
-The orchestrator chooses the structure of `final_result.json` based on the
-research task and the data returned by its subagents. The runner does not impose
-a domain-independent schema or rewrite the result. It only requires a non-empty,
-valid JSON object or array within the publication size limit. A missing or
-malformed plan or final result fails the job instead of publishing an incomplete
-success.
+The orchestrator should follow `DATA_MINING_RESULT_SCHEMA.md` and publish one or
+two standardized relational tables. The runner classifies schema-compliant
+results for telemetry but does not make that classification a completion gate.
+Any non-empty, valid JSON object or array remains publishable and is displayed
+as JSON in the admin UI when it does not satisfy the database schema. Missing or
+syntactically invalid output still fails the job.
 
 ## Local subagent-manager MCP server
 
