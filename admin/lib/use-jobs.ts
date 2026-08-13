@@ -64,10 +64,11 @@ export function refreshJobs() {
 export async function launchJob(
   originalTask: string,
   typeOfJob: JobType,
+  anchorFile?: File | null,
 ): Promise<Job | null> {
   updateStore({ pending: true, error: null });
   try {
-    return await requestJobLaunch(originalTask, typeOfJob);
+    return await requestJobLaunch(originalTask, typeOfJob, anchorFile);
   } catch (caught) {
     updateStore({ error: describeError(caught, "The job could not be launched.") });
     return null;

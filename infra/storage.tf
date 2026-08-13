@@ -98,6 +98,29 @@ resource "aws_s3_bucket_versioning" "agent_workspace" {
   }
 }
 
+// Raw user uploads are intentionally a stricter boundary than ordinary job
+// artifacts. The admin server may write them, but only the orchestrator role
+// may retrieve their contents. Subagents receive row-level values in tasks.
+resource "aws_s3_bucket_policy" "agent_workspace_private_inputs" {
+  bucket = aws_s3_bucket.agent_workspace.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "OnlyOrchestratorCanReadPrivateInputs"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:GetObject"
+      Resource  = "${aws_s3_bucket.agent_workspace.arn}/jobs/*/input/*"
+      Condition = {
+        StringNotEquals = {
+          "aws:PrincipalArn" = aws_iam_role.orchestrator.arn
+        }
+      }
+    }]
+  })
+}
+
 // Holds one item per multi-agent job plus a single lock item. The admin server
 // writes both in one transaction so at most one job can ever be active.
 resource "aws_dynamodb_table" "jobs" {

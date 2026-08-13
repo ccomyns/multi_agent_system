@@ -4,6 +4,7 @@ import {
   RunInstancesCommand,
   TerminateInstancesCommand,
 } from "@aws-sdk/client-ec2";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import {
   DynamoDBDocumentClient,
   GetCommand,
@@ -23,12 +24,26 @@ export const dynamic = "force-dynamic";
 // Exactly one lock item ever. Its presence means a multi-agent job is active.
 const LOCK_KEY = "ACTIVE_JOB";
 const MAX_TASK_LENGTH = 4000;
+const MAX_ANCHOR_FILE_BYTES = 25 * 1024 * 1024;
 const JOB_HISTORY_LIMIT = 50;
+
+const ANCHOR_FILE_TYPES = {
+  ".json": "application/json",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".xls": "application/vnd.ms-excel",
+  ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+} as const;
+
+type AnchorFileExtension = keyof typeof ANCHOR_FILE_TYPES;
 
 type LaunchJobRequest = {
   jobId?: unknown;
   originalTask?: unknown;
   typeOfJob?: unknown;
+};
+
+type ParsedLaunchJobRequest = LaunchJobRequest & {
+  anchorFile: File | null;
 };
 
 type JobItem = {
@@ -66,7 +81,78 @@ function configuration() {
     jobsTable,
     launchTemplateId,
     launchTemplateVersion: process.env.ORCHESTRATOR_LAUNCH_TEMPLATE_VERSION || "$Default",
+    workspaceBucket: process.env.AGENT_WORKSPACE_BUCKET_NAME,
     region: process.env.AWS_REGION,
+  };
+}
+
+function anchorFileExtension(name: string): AnchorFileExtension | null {
+  const dot = name.lastIndexOf(".");
+  const extension = (dot >= 0 ? name.slice(dot) : "").toLowerCase();
+  return Object.hasOwn(ANCHOR_FILE_TYPES, extension)
+    ? (extension as AnchorFileExtension)
+    : null;
+}
+
+async function parseLaunchRequest(request: Request): Promise<ParsedLaunchJobRequest> {
+  const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
+  if (contentType.startsWith("multipart/form-data")) {
+    const form = await request.formData();
+    const candidate = form.get("anchorFile");
+    return {
+      jobId: form.get("jobId"),
+      originalTask: form.get("originalTask"),
+      typeOfJob: form.get("typeOfJob"),
+      anchorFile: candidate && typeof candidate !== "string" ? candidate : null,
+    };
+  }
+
+  const input = (await request.json()) as LaunchJobRequest;
+  return { ...input, anchorFile: null };
+}
+
+async function validatedAnchorUpload(file: File) {
+  const extension = anchorFileExtension(file.name);
+  if (!extension) {
+    throw new Error("anchorFile must be a JSON or Excel file (.json, .xlsx, .xls, or .xlsm).", {
+      cause: "invalid-input",
+    });
+  }
+  if (file.size === 0 || file.size > MAX_ANCHOR_FILE_BYTES) {
+    throw new Error("anchorFile must be non-empty and no larger than 25 MB.", {
+      cause: "invalid-input",
+    });
+  }
+
+  const body = Buffer.from(await file.arrayBuffer());
+  if (extension === ".json") {
+    try {
+      const parsed: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+      if (typeof parsed !== "object" || parsed === null) {
+        throw new Error("JSON anchor data must contain an object or array.");
+      }
+    } catch {
+      throw new Error("anchorFile must contain valid UTF-8 JSON data in an object or array.", {
+        cause: "invalid-input",
+      });
+    }
+  } else if (extension === ".xls") {
+    const compoundFileSignature = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+    if (!body.subarray(0, compoundFileSignature.length).equals(compoundFileSignature)) {
+      throw new Error("anchorFile does not appear to be a valid .xls workbook.", {
+        cause: "invalid-input",
+      });
+    }
+  } else if (body[0] !== 0x50 || body[1] !== 0x4b) {
+    throw new Error(`anchorFile does not appear to be a valid ${extension} workbook.`, {
+      cause: "invalid-input",
+    });
+  }
+
+  return {
+    body,
+    extension,
+    contentType: ANCHOR_FILE_TYPES[extension],
   };
 }
 
@@ -206,11 +292,12 @@ export async function POST(request: Request) {
     );
   }
 
-  let input: LaunchJobRequest;
+  let input: ParsedLaunchJobRequest;
   try {
-    input = (await request.json()) as LaunchJobRequest;
-  } catch {
-    return errorResponse("Request body must be valid JSON.", 400);
+    input = await parseLaunchRequest(request);
+  } catch (error) {
+    console.error("Job launch request parsing failed", error);
+    return errorResponse("Request body must be valid JSON or multipart form data.", 400);
   }
 
   if (typeof input.jobId !== "string" || !JOB_ID_PATTERN.test(input.jobId)) {
@@ -234,8 +321,26 @@ export async function POST(request: Request) {
     return errorResponse("typeOfJob is not supported.", 400);
   }
   const typeOfJob: JobType = requestedJobType;
+  let anchorUpload: Awaited<ReturnType<typeof validatedAnchorUpload>> | null = null;
+  if (input.anchorFile) {
+    if (!config.workspaceBucket) {
+      return errorResponse(
+        "The admin server is missing AGENT_WORKSPACE_BUCKET_NAME for anchor-file uploads.",
+        503,
+      );
+    }
+    try {
+      anchorUpload = await validatedAnchorUpload(input.anchorFile);
+    } catch (error) {
+      return errorResponse(
+        error instanceof Error ? error.message : "The anchor file is invalid.",
+        400,
+      );
+    }
+  }
   const createdAt = new Date().toISOString();
   const documents = documentClient();
+  const anchorKey = `jobs/${jobId}/input/anchor-data`;
 
   try {
     // Claim the lock and create the job record together. The lock write fails if
@@ -269,6 +374,7 @@ export async function POST(request: Request) {
                 orchestrator_instance_id: null,
                 launched_at: null,
                 finished_at: null,
+                has_input_file: anchorUpload !== null,
               },
               ConditionExpression: "attribute_not_exists(pk)",
             },
@@ -295,6 +401,37 @@ export async function POST(request: Request) {
       error instanceof Error ? error.message : "The job record could not be created.",
       502,
     );
+  }
+
+  if (anchorUpload && config.workspaceBucket && input.anchorFile) {
+    const s3 = new S3Client(awsClientOptions());
+    try {
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: config.workspaceBucket,
+          Key: anchorKey,
+          Body: anchorUpload.body,
+          ContentLength: anchorUpload.body.length,
+          ContentType: anchorUpload.contentType,
+          ServerSideEncryption: "AES256",
+          Metadata: {
+            "original-filename": encodeURIComponent(input.anchorFile.name),
+            "file-extension": anchorUpload.extension,
+            "job-id": jobId,
+          },
+        }),
+      );
+    } catch (error) {
+      console.error("Anchor-file upload failed", error);
+      await releaseJob(documents, config.jobsTable, jobId, "failed");
+      documents.destroy();
+      return errorResponse(
+        error instanceof Error ? error.message : "The anchor file could not be uploaded.",
+        502,
+      );
+    } finally {
+      s3.destroy();
+    }
   }
 
   const ec2 = new EC2Client(awsClientOptions());

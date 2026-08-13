@@ -111,11 +111,29 @@ export async function fetchJobs(): Promise<JobsSnapshot> {
   return payload;
 }
 
-export async function requestJobLaunch(originalTask: string, typeOfJob: JobType): Promise<Job> {
+export async function requestJobLaunch(
+  originalTask: string,
+  typeOfJob: JobType,
+  anchorFile?: File | null,
+): Promise<Job> {
+  let request: RequestInit;
+  if (anchorFile) {
+    const body = new FormData();
+    body.set("jobId", createJobId());
+    body.set("originalTask", originalTask);
+    body.set("typeOfJob", typeOfJob);
+    body.set("anchorFile", anchorFile, anchorFile.name);
+    request = { method: "POST", body };
+  } else {
+    request = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId: createJobId(), originalTask, typeOfJob }),
+    };
+  }
+
   const payload = await requestJobs("/api/jobs", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jobId: createJobId(), originalTask, typeOfJob }),
+    ...request,
   });
   if (!isJob(payload)) {
     throw new Error("The admin server returned an unexpected job record.");

@@ -45,19 +45,21 @@ The runner:
 
 1. Reads `JOB#<job_id>` from the jobs table and validates that it belongs to
    this orchestrator.
-2. Fetches and installs the current Codex `auth.json`.
-3. Verifies that the configured local `spawn_agent` MCP executable exists.
-4. Writes a job-local Codex configuration with the requested developer prompt
+2. If the job has private anchor data, downloads it from
+   `jobs/<job_id>/input/` into the orchestrator-only local `input/` directory.
+3. Fetches and installs the current Codex `auth.json`.
+4. Verifies that the configured local `spawn_agent` MCP executable exists.
+5. Writes a job-local Codex configuration with the requested developer prompt
    and the required MCP server, and copies the bundled documentation into the
    job workspace as `documentation/`.
-5. Runs the original task with `gpt-5.6-terra`, a workspace-write sandbox, no
+6. Runs the original task with `gpt-5.6-terra`, a workspace-write sandbox, no
    interactive approvals, and live native search via `codex --search exec`.
-6. Validates and uploads the durable job outputs:
+7. Validates and uploads the durable job outputs:
    - `s3://<agent-workspace>/jobs/<job_id>/result/plan.md`
    - `s3://<agent-workspace>/jobs/<job_id>/result/final_result.json`
    - `s3://<agent-workspace>/jobs/<job_id>/result/final.md`
-7. Atomically marks the job completed or failed and releases `ACTIVE_JOB`.
-8. Shuts down; the launch template converts shutdown into EC2 termination.
+8. Atomically marks the job completed or failed and releases `ACTIVE_JOB`.
+9. Shuts down; the launch template converts shutdown into EC2 termination.
 
 The default `SUBAGENT_MODEL=gpt-5.6-luna` is passed to the MCP server. The MCP
 server must apply that value when it launches a subagent; it is not controlled
@@ -67,6 +69,11 @@ by the orchestrator's `--model` flag.
 
 - `AGENT_WORKSPACE_BUCKET_NAME` contains job-scoped inputs, intermediate
   artifacts, subagent outputs, final results, and Image Builder runtime bundles.
+- Raw files uploaded by users use the deterministic key
+  `jobs/<job_id>/input/anchor-data`. Bucket and role
+  policies allow only the orchestrator role to read them. The admin server can
+  upload but cannot download them, and subagents cannot read or overwrite them.
+  Inputs are also excluded from the orchestrator debug-workspace upload.
 - `GLOBAL_MEMORY_BUCKET_NAME` contains curated knowledge that persists across
   jobs. It is read-only for both orchestrators and subagents.
 

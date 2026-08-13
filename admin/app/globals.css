@@ -786,6 +786,112 @@ h1 {
   cursor: not-allowed;
 }
 
+.job-file-drop-overlay {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: grid;
+  padding: 24px;
+  background: rgb(238 245 255 / 82%);
+  backdrop-filter: blur(5px);
+  pointer-events: none;
+  place-items: center;
+}
+
+.job-file-drop-overlay > div {
+  display: grid;
+  min-width: min(380px, 100%);
+  gap: 7px;
+  padding: 28px;
+  color: var(--blue-strong);
+  background: var(--surface);
+  border: 2px dashed #8eb4d9;
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  text-align: center;
+  place-items: center;
+}
+
+.job-file-drop-overlay strong {
+  margin-top: 4px;
+  color: var(--text-strong);
+  font-size: 15px;
+}
+
+.job-file-drop-overlay span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.job-anchor-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 10px;
+  padding: 9px 10px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+}
+
+.job-anchor-file-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  color: var(--blue-strong);
+  background: var(--surface-blue);
+  border-radius: 8px;
+  place-items: center;
+}
+
+.job-anchor-file-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.job-anchor-file-copy strong,
+.job-anchor-file-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-anchor-file-copy strong {
+  color: var(--text-strong);
+  font-size: 11px;
+}
+
+.job-anchor-file-copy span {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.job-anchor-file > button,
+.job-attach-button {
+  display: grid;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  place-items: center;
+}
+
+.job-anchor-file > button {
+  width: 28px;
+  height: 28px;
+}
+
+.job-anchor-file > button:hover:not(:disabled),
+.job-attach-button:hover:not(:disabled) {
+  color: var(--blue-strong);
+  background: var(--surface-blue);
+}
+
 .job-type-selector {
   display: flex;
   align-items: center;
@@ -853,6 +959,28 @@ h1 {
   gap: 6px;
   color: #8b99aa;
   font-size: 10px;
+}
+
+.job-prompt-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.job-attach-button {
+  width: 34px;
+  height: 34px;
+}
+
+.job-attach-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.job-attach-button:focus-visible,
+.job-anchor-file > button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
 }
 
 .job-send-button {

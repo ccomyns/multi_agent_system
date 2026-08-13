@@ -144,6 +144,12 @@ npm run dev
 
 Open `http://localhost:3000`.
 
+On the new-job page, a user can drop one JSON or Excel anchor file anywhere in
+the UI (or use the paperclip button) before launching the job. Files are limited
+to 25 MB and stored at the private `jobs/<job_id>/input/anchor-data` key in the agent
+workspace bucket. Only the orchestrator can download the raw file; it passes
+the values needed for each anchor record to subagents in successive batches.
+
 To launch real jobs, copy `admin/.env.example` to `admin/.env.local` and set
 `JOBS_TABLE_NAME`, `ORCHESTRATOR_LAUNCH_TEMPLATE_ID`,
 `ORCHESTRATOR_LAUNCH_TEMPLATE_VERSION`, `AUDIT_BUCKET_NAME`, and `AWS_REGION`

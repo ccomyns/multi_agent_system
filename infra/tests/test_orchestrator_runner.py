@@ -59,6 +59,7 @@ class OrchestratorRunnerTests(unittest.TestCase):
         run.plan_file = run.workspace / "plan.md"
         run.final_message = run.workspace / "final.md"
         run.final_result = run.workspace / "final_result.json"
+        run.input_dir = run.workspace / "input"
         run.result_dir = root / "result"
         run.completed_file = run.result_dir / "completed.md"
         run.failure_file = run.result_dir / "failure.md"
@@ -140,6 +141,9 @@ class OrchestratorRunnerTests(unittest.TestCase):
             self.assertIn("Choose the JSON structure", config)
             self.assertIn("active_subagent_limit_reached", config)
             self.assertIn("A subagent should have ownership over a single URL", config)
+            self.assertNotIn("A trusted anchor-data file is available", config)
+            self.assertNotIn("every populated anchor record", config)
+            self.assertNotIn("one anchor record to one subagent", config)
             self.assertIn("Include the URL of the website", config)
             self.assertIn("use Playwright with Chromium", config)
             self.assertIn("click through and explore", config)
@@ -166,6 +170,92 @@ class OrchestratorRunnerTests(unittest.TestCase):
             )
             self.assertEqual(run.telemetry.latest["usage"]["total_tokens"], 150)
             self.assertTrue(run.telemetry.raw_events_file.is_file())
+
+    def test_private_anchor_file_is_loaded_and_downloaded_to_input_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            payload = b'[{"firm": "Example Capital"}]'
+            run.job_pk = f"JOB#{run.job_id}"
+            run.jobs_table = "jobs-table"
+            run.ddb = Mock()
+            run.ddb.get_item.return_value = {
+                "Item": {
+                    "status": {"S": "running"},
+                    "orchestrator_instance_id": {"S": run.orchestrator_instance_id},
+                    "original_task": {"S": "Find portfolio companies."},
+                    "has_input_file": {"BOOL": True},
+                }
+            }
+            run.s3.get_object.return_value = {
+                "Body": io.BytesIO(payload),
+                "ContentLength": len(payload),
+                "ContentType": "application/json",
+                "Metadata": {
+                    "file-extension": ".json",
+                    "original-filename": "firms.json",
+                },
+            }
+
+            task, has_input_file = run.load_task()
+            destination = run.download_anchor_file(has_input_file)
+
+            self.assertEqual(task, "Find portfolio companies.")
+            self.assertTrue(has_input_file)
+            self.assertIsNotNone(destination)
+            assert destination is not None
+            self.assertEqual(destination, run.input_dir / "anchor-data.json")
+            self.assertEqual(destination.read_bytes(), payload)
+            run.s3.get_object.assert_called_once_with(
+                Bucket=run.workspace_bucket,
+                Key=f"jobs/{run.job_id}/input/anchor-data",
+            )
+
+    def test_job_without_anchor_file_does_not_access_s3(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            run.job_pk = f"JOB#{run.job_id}"
+            run.jobs_table = "jobs-table"
+            run.ddb = Mock()
+            run.ddb.get_item.return_value = {
+                "Item": {
+                    "status": {"S": "running"},
+                    "orchestrator_instance_id": {"S": run.orchestrator_instance_id},
+                    "original_task": {"S": "Research a market."},
+                    "has_input_file": {"BOOL": False},
+                }
+            }
+
+            task, has_input_file = run.load_task()
+            destination = run.download_anchor_file(has_input_file)
+
+            self.assertEqual(task, "Research a market.")
+            self.assertFalse(has_input_file)
+            self.assertIsNone(destination)
+            run.s3.get_object.assert_not_called()
+
+    def test_anchor_file_adds_private_row_allocation_instructions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            run.input_dir.mkdir()
+            anchor_file = run.input_dir / "anchor-data.xlsx"
+            anchor_file.write_bytes(b"PK workbook")
+
+            def complete_codex(command, **kwargs):
+                self.write_codex_outputs(run)
+                process = Mock()
+                process.stdout = io.BytesIO(b'{"type":"turn.completed","usage":{}}\n')
+                process.wait.return_value = 0
+                return process
+
+            with patch.object(runner_module.subprocess, "Popen", side_effect=complete_codex):
+                run.run_codex("Find portfolio companies.", anchor_file)
+
+            config = (run.codex_home / "config.toml").read_text(encoding="utf-8")
+            self.assertIn("input/anchor-data.xlsx", config)
+            self.assertIn("every populated anchor record", config)
+            self.assertIn("one anchor record to one subagent", config)
+            self.assertIn("raw uploaded file is orchestrator-only", config)
+            self.assertIn("never give a subagent its local path or S3 key", config)
 
     def test_missing_spawn_agent_server_fails_before_codex(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -224,6 +314,10 @@ class OrchestratorRunnerTests(unittest.TestCase):
             (run.workspace / "collected" / "agent-data.json").write_text(
                 '{"records": []}\n', encoding="utf-8"
             )
+            run.input_dir.mkdir()
+            (run.input_dir / "anchor-data.json").write_text(
+                '[{"private": true}]\n', encoding="utf-8"
+            )
 
             outputs = run.upload_outputs()
             outputs.update(run.upload_debug_artifacts())
@@ -237,6 +331,7 @@ class OrchestratorRunnerTests(unittest.TestCase):
             self.assertIn(f"{prefix}/debug/codex.log", keys)
             self.assertIn(f"{prefix}/workspace/plan.md", keys)
             self.assertIn(f"{prefix}/workspace/collected/agent-data.json", keys)
+            self.assertNotIn(f"{prefix}/workspace/input/anchor-data.json", keys)
             self.assertEqual(keys[-2], f"{prefix}/status/completed.json")
             self.assertEqual(keys[-1], f"{prefix}/result/completed.md")
             self.assertEqual(

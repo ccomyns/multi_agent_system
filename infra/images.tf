@@ -158,7 +158,8 @@ resource "aws_imagebuilder_component" "orchestrator_runtime" {
                     python3 -m venv /opt/multi-agent/venv
                   fi
                   /opt/multi-agent/venv/bin/pip install --no-cache-dir \
-                    --upgrade pip boto3 'mcp>=1.27,<2'
+                    --upgrade pip boto3 'mcp>=1.27,<2' \
+                    'openpyxl>=3.1,<4' 'xlrd>=2,<3'
 
                   echo "${filesha256(data.archive_file.orchestrator_runtime.output_path)}  /tmp/orchestrator-runtime.zip" \
                     | sha256sum --check
@@ -214,6 +215,7 @@ resource "aws_imagebuilder_component" "orchestrator_runtime" {
                 "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/agent_telemetry.py",
                 "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/spawn_agent_mcp.py",
                 "/opt/multi-agent/venv/bin/python -c 'from mcp.server.fastmcp import FastMCP'",
+                "/opt/multi-agent/venv/bin/python -c 'import openpyxl, xlrd'",
                 "cd /var/lib/multi-agent && runuser -u multi-agent -- codex sandbox -- /bin/true",
                 "test -x /opt/multi-agent/runtime/bin/spawn-agent-mcp",
                 "systemd-analyze verify /etc/systemd/system/multi-agent-orchestrator.service",

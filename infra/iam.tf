@@ -94,6 +94,16 @@ resource "aws_iam_role_policy" "subagent" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid    = "DenyPrivateJobInputs"
+        Effect = "Deny"
+        Action = [
+          "s3:AbortMultipartUpload",
+          "s3:GetObject",
+          "s3:PutObject"
+        ]
+        Resource = "${aws_s3_bucket.agent_workspace.arn}/jobs/*/input/*"
+      },
+      {
         Sid      = "ListAgentWorkspace"
         Effect   = "Allow"
         Action   = "s3:ListBucket"
@@ -286,6 +296,12 @@ resource "aws_iam_user_policy" "admin_server" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      {
+        Sid      = "UploadPrivateJobInputs"
+        Effect   = "Allow"
+        Action   = "s3:PutObject"
+        Resource = "${aws_s3_bucket.agent_workspace.arn}/jobs/*/input/*"
+      },
       {
         Sid    = "JobsTable"
         Effect = "Allow"

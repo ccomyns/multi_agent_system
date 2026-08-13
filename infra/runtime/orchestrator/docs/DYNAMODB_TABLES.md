@@ -18,6 +18,12 @@ Records:
   timestamps. New records currently use `type_of_job = data_mining`; readers
   treat older records without the attribute as data-mining jobs.
 
+Jobs also store `has_input_file`, a boolean indicating whether the admin server
+uploaded anchor data. When true, the orchestrator downloads the deterministic
+private object `jobs/<job_id>/input/anchor-data`. Original filename, extension,
+and content type live only in S3 object metadata; raw contents never enter
+DynamoDB.
+
 The admin server creates the job record and lock together. The real
 orchestrator reads its job record and eventually completes or fails it while
 releasing the lock. This table does not contain one record per subagent.
