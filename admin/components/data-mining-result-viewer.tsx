@@ -12,6 +12,35 @@ import type {
 } from "@/lib/data-mining-result";
 
 const ROWS_PER_PAGE = 100;
+const ROW_NUMBER_COLUMN_WIDTH = 54;
+const CONTENT_WEIGHT_SHARE = 0.75;
+
+function cellTextLength(value: DataMiningCell) {
+  if (value === null) return 0;
+  return String(value).replace(/\s+/g, " ").trim().length;
+}
+
+function calculateColumnWidths(table: DataMiningTable, columns: DataMiningColumn[]) {
+  if (columns.length === 0) return [];
+
+  const weights = columns.map((column) => {
+    const contentLength = table.rows.reduce(
+      (total, row) => total + cellTextLength(row[column.key]),
+      0,
+    );
+    const averageContentLength = table.rows.length > 0
+      ? contentLength / table.rows.length
+      : 0;
+
+    // Square-root scaling keeps the ordering content-driven without allowing a
+    // single unusually verbose field to make every other column unusably narrow.
+    return Math.sqrt(Math.max(column.label.trim().length, averageContentLength, 1));
+  });
+  const totalWeight = weights.reduce((total, weight) => total + weight, 0);
+  const equalShare = (1 - CONTENT_WEIGHT_SHARE) / columns.length;
+
+  return weights.map((weight) => (equalShare + CONTENT_WEIGHT_SHARE * (weight / totalWeight)) * 100);
+}
 
 function renderCell(value: DataMiningCell, column: DataMiningColumn) {
   if (value === null) return <span className="result-null">NULL</span>;
@@ -30,6 +59,10 @@ function renderCell(value: DataMiningCell, column: DataMiningColumn) {
 function ResultTable({ table, labelledBy }: { table: DataMiningTable; labelledBy?: string }) {
   const [page, setPage] = useState(1);
   const columns = useMemo(() => table.columns.filter((column) => !column.hidden), [table.columns]);
+  const columnWidths = useMemo(
+    () => calculateColumnWidths(table, columns),
+    [columns, table],
+  );
   const pageCount = Math.max(1, Math.ceil(table.rows.length / ROWS_PER_PAGE));
   const safePage = Math.min(page, pageCount);
   const start = (safePage - 1) * ROWS_PER_PAGE;
@@ -60,6 +93,17 @@ function ResultTable({ table, labelledBy }: { table: DataMiningTable; labelledBy
       ) : (
         <div className="result-grid-scroll">
           <table className="result-grid">
+            <colgroup>
+              <col className="result-row-number-column" />
+              {columns.map((column, index) => (
+                <col
+                  key={column.key}
+                  style={{
+                    width: `calc(${columnWidths[index]}% - ${ROW_NUMBER_COLUMN_WIDTH * columnWidths[index] / 100}px)`,
+                  }}
+                />
+              ))}
+            </colgroup>
             <thead>
               <tr>
                 <th className="result-row-number" aria-label="Row number">#</th>
