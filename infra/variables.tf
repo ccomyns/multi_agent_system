@@ -96,7 +96,7 @@ variable "subagent_ttl_seconds" {
 variable "agent_image_version" {
   description = "Semantic version assigned to shared Image Builder components and the subagent recipe. Increment this to rebuild the subagent AMI and shared tools."
   type        = string
-  default     = "1.0.6"
+  default     = "1.0.7"
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.agent_image_version))

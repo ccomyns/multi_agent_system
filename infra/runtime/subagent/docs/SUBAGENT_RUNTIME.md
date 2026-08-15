@@ -18,17 +18,22 @@ The filesystem contract is:
 - `/work`: task input, code, downloads, and all working artifacts.
 - `/summary/summary.md`: approach, methods, sources, significant findings,
   useful work artifacts, and caveats.
-- `/summary/results_<agent_id>.json`: the gathered data as a structured JSON
-  object or array.
+- `/summary/results.json`: the gathered data as a structured JSON object or
+  array. The model never has to reproduce its opaque agent ID.
 - `/result/completed.md` or `/result/failure.md`: a brief terminal marker
   written by the supervisor, not a research output.
 
 After Codex exits, the runner requires a non-empty summary and a non-empty,
-valid JSON dataset. It uploads those files first, then writes and uploads
-`status/completed.json`, and finally writes and uploads `completed.md` as the
-terminal readiness flag. If execution or publication fails, it publishes
-`status/failed.json` and then `failure.md` when possible. The terminal marker is
-the last publication step; the runner exits immediately afterward.
+valid JSON dataset. Trusted runner code maps local `/summary/results.json` to
+`jobs/<job_id>/agents/<agent_id>/summary/results_<agent_id>.json`; the agent ID
+comes from the validated launch environment rather than model output. It uploads
+the canonical data files first, then writes and uploads `status/completed.json`,
+and finally writes and uploads `completed.md` as the terminal readiness flag.
+Unexpected files from `/summary` are retained only beneath
+`debug/model-summary/`, never in the canonical `summary/` prefix. If execution
+or publication fails, the runner publishes `status/failed.json` and then
+`failure.md` when possible. The terminal marker is the last publication step;
+the runner exits immediately afterward.
 
 The systemd unit always invokes `shutdown -h now` after the runner exits. EC2's
 instance-initiated shutdown behavior is `terminate`, so the instance and its

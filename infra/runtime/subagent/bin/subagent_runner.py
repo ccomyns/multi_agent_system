@@ -83,7 +83,7 @@ class SubagentRun:
         self.summary_dir = Path("/summary")
         self.result_dir = Path("/result")
         self.summary_file = self.summary_dir / "summary.md"
-        self.results_file = self.summary_dir / f"results_{self.agent_id}.json"
+        self.results_file = self.summary_dir / "results.json"
         self.completed_file = self.result_dir / "completed.md"
         self.failure_file = self.result_dir / "failure.md"
         self.codex_final_message = self.work_dir / "codex-final-message.md"
@@ -189,7 +189,7 @@ class SubagentRun:
             "/work so they can be archived. Before finishing, create "
             "/summary/summary.md explaining the approach you took, sources and methods used, "
             "significant findings, useful artifacts in /work, and any caveats. Also create "
-            f"/summary/results_{self.agent_id}.json containing the data you gathered as valid "
+            "/summary/results.json containing the data you gathered as valid "
             "JSON. Prefer a JSON object with a records array plus source and field metadata "
             "when that shape fits the task. Do not use the summary as a substitute for the "
             "structured dataset. The supervisor validates and uploads both files, then writes "
@@ -369,7 +369,7 @@ exclude_tmpdir_env_var = true
 
         artifact_roots = (
             (self.work_dir, f"{self.agent_prefix}/work"),
-            (self.summary_dir, f"{self.agent_prefix}/summary"),
+            (self.summary_dir, f"{self.agent_prefix}/debug/model-summary"),
         )
         for local_root, s3_prefix in artifact_roots:
             if not local_root.is_dir():

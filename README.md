@@ -53,8 +53,9 @@ item includes its
 orchestrator ID, agent ID, AMI ID, instance type, TTL, state, EC2 instance ID,
 and lifecycle timestamps. A real subagent downloads
 `jobs/<job_id>/agents/<agent_id>/input.json`, keeps all working files under
-`/work`, and writes `/summary/summary.md` plus
-`/summary/results_<agent_id>.json`. The supervisor uploads those data products,
+`/work`, and writes `/summary/summary.md` plus `/summary/results.json`. The
+supervisor adds the trusted agent ID when it uploads the dataset as
+`results_<agent_id>.json`, then uploads those data products,
 writes a brief `/result/completed.md` or `/result/failure.md` terminal marker,
 and publishes a machine-readable status record before the instance shuts down.
 The orchestrator's local MCP server polls for those terminal markers without

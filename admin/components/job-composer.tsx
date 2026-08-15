@@ -221,27 +221,6 @@ export function JobComposer() {
           <label className="sr-only" htmlFor="job-prompt">
             Research request
           </label>
-          <textarea
-            ref={textareaRef}
-            id="job-prompt"
-            data-testid="job-prompt"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void submitJob();
-              }
-            }}
-            placeholder={
-              job
-                ? "This job is active. Only one job can run at a time."
-                : "Describe the research job you want to run…"
-            }
-            disabled={!hydrated || Boolean(job) || pending}
-            maxLength={4000}
-            rows={3}
-          />
           {anchorFile ? (
             <div className="job-anchor-file" aria-label="Attached anchor file">
               <span className="job-anchor-file-icon" aria-hidden="true">
@@ -268,6 +247,27 @@ export function JobComposer() {
               </button>
             </div>
           ) : null}
+          <textarea
+            ref={textareaRef}
+            id="job-prompt"
+            data-testid="job-prompt"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void submitJob();
+              }
+            }}
+            placeholder={
+              job
+                ? "This job is active. Only one job can run at a time."
+                : "Describe the research job you want to run…"
+            }
+            disabled={!hydrated || Boolean(job) || pending}
+            maxLength={4000}
+            rows={3}
+          />
           <div className="job-prompt-footer">
             <span>
               {job ? (

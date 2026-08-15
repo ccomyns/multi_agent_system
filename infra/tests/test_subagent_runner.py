@@ -51,7 +51,7 @@ class SubagentRunnerTests(unittest.TestCase):
         run.summary_dir = root / "summary"
         run.result_dir = root / "result"
         run.summary_file = run.summary_dir / "summary.md"
-        run.results_file = run.summary_dir / f"results_{run.agent_id}.json"
+        run.results_file = run.summary_dir / "results.json"
         run.completed_file = run.result_dir / "completed.md"
         run.failure_file = run.result_dir / "failure.md"
         run.codex_final_message = run.work_dir / "codex-final-message.md"
@@ -159,6 +159,8 @@ class SubagentRunnerTests(unittest.TestCase):
             self.assertIn('approval_policy = "never"', config)
             self.assertIn("save the exact script you ran", config)
             self.assertIn("raw and processed scraped data files", config)
+            self.assertIn("/summary/results.json", config)
+            self.assertNotIn(f"/summary/results_{run.agent_id}.json", config)
             self.assertIn('writable_roots = ["/summary"]', config)
             self.assertIn("network_access = true", config)
             self.assertIn("exclude_slash_tmp = true", config)
@@ -229,12 +231,58 @@ class SubagentRunnerTests(unittest.TestCase):
             self.assertIn(f"{run.agent_prefix}/debug/codex.log", keys)
             self.assertIn(f"{run.agent_prefix}/work/scrape.py", keys)
             self.assertIn(f"{run.agent_prefix}/work/scraped-data.json", keys)
-            self.assertGreaterEqual(keys.count(f"{run.agent_prefix}/summary/summary.md"), 2)
+            self.assertEqual(keys.count(f"{run.agent_prefix}/summary/summary.md"), 1)
+            self.assertIn(
+                f"{run.agent_prefix}/debug/model-summary/summary.md",
+                keys,
+            )
+            self.assertIn(
+                f"{run.agent_prefix}/debug/model-summary/results.json",
+                keys,
+            )
             self.assertEqual(keys[-2], f"{run.agent_prefix}/status/completed.json")
             self.assertEqual(keys[-1], f"{run.agent_prefix}/result/completed.md")
             self.assertEqual(
                 run.completed_file.read_text(encoding="utf-8"),
                 "Completed successfully.\n",
+            )
+
+    def test_model_results_filename_is_mapped_to_trusted_agent_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            run.summary_file.write_text("Work summary", encoding="utf-8")
+            run.results_file.write_text('{"records": []}', encoding="utf-8")
+
+            outputs = run.upload_data_outputs()
+
+            self.assertEqual(run.results_file.name, "results.json")
+            self.assertEqual(
+                outputs["results_uri"],
+                f"s3://{run.workspace_bucket}/{run.agent_prefix}/summary/"
+                f"results_{run.agent_id}.json",
+            )
+            results_call = run.s3.put_object.call_args_list[1]
+            self.assertEqual(
+                results_call.kwargs["Key"],
+                f"{run.agent_prefix}/summary/results_{run.agent_id}.json",
+            )
+
+    def test_unexpected_summary_filename_is_archived_only_as_debug_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            unexpected = run.summary_dir / f"results_{run.agent_id}e.json"
+            unexpected.write_text('{"records": []}', encoding="utf-8")
+
+            run.upload_debug_artifacts(strict=False)
+
+            keys = [call.kwargs["Key"] for call in run.s3.put_object.call_args_list]
+            self.assertIn(
+                f"{run.agent_prefix}/debug/model-summary/{unexpected.name}",
+                keys,
+            )
+            self.assertNotIn(
+                f"{run.agent_prefix}/summary/{unexpected.name}",
+                keys,
             )
 
     def test_failure_marker_is_brief_and_separate_from_completion(self) -> None:
