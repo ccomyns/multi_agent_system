@@ -10,7 +10,7 @@ current implementation contains:
 - A real subagent runtime that downloads S3 task specifications, runs Codex,
   publishes a research summary, structured JSON dataset, and terminal marker,
   then self-terminates.
-- A hard limit of eight active subagents per orchestrator.
+- A hard limit of twelve active subagents per orchestrator.
 - A hard limit of one active multi-agent job, enforced by a DynamoDB lock item.
 - DynamoDB transactions for concurrency state.
 - Separate S3 buckets for lifecycle audit records, durable global memory, and
@@ -104,7 +104,7 @@ The console models exactly one active multi-agent run. It shows:
 
 - Orchestrator EC2 state and host utilization.
 - The current research objective and elapsed time.
-- Active capacity against the eight-agent limit.
+- Active capacity against the twelve-agent limit.
 - Searchable and filterable subagent assignments, instances, and activity.
 
 Launch a Job is backed by the jobs table through `/api/jobs`; the legacy root
@@ -187,7 +187,7 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-The tests cover the eight-agent boundary, ninth-call rejection, idempotent
+The tests cover the configured agent boundary, over-capacity rejection, idempotent
 request IDs, launch failure handling, and termination reconciliation.
 
 ## Terraform
@@ -223,8 +223,9 @@ Applying this configuration builds two AMIs:
 - Subagent: Codex CLI, DuckDB CLI, Playwright, Chromium, and the S3-delivered
   task runner.
 
-Both runtime roles default to `t3.large`. Subagents self-terminate after 1,800
-seconds (30 minutes). The AMIs use Ubuntu 24.04 because it is an operating
+Both runtime roles default to `t3.large`, with a maximum of twelve active
+subagents per orchestrator. Subagents self-terminate after
+1,800 seconds (30 minutes). The AMIs use Ubuntu 24.04 because it is an operating
 system supported by Playwright.
 
 The install components request current software releases at image-build time.

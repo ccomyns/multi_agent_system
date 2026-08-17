@@ -13,7 +13,7 @@ variable "project_name" {
 variable "max_active_subagents" {
   description = "Hard maximum number of active subagents per orchestrator."
   type        = number
-  default     = 8
+  default     = 12
 
   validation {
     condition     = var.max_active_subagents >= 1 && var.max_active_subagents <= 100

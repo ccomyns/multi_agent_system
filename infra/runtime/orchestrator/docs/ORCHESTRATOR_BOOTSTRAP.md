@@ -121,9 +121,9 @@ The terminal Markdown markers remain in S3 and are not returned to Codex. A
 bounded collection timeout returns pending IDs so the orchestrator can call the
 tool again without relaunching agents.
 
-Only eight subagents may be active at once. If a later planned spawn returns
+Only twelve subagents may be active at once. If a later planned spawn returns
 `active_subagent_limit_reached`, the orchestrator retains that task, collects
 the accepted batch, and then retries the rejected task with brief delays until
 capacity reconciliation allows it to launch. Rejected IDs are not collected
-until a retry has actually been accepted. This permits jobs with more than eight
+until a retry has actually been accepted. This permits jobs with more than twelve
 subtasks to run in successive batches without silently dropping work.

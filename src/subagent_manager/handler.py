@@ -127,7 +127,7 @@ def _reserve_slot(
     handoff: dict[str, str],
 ) -> bool:
     table_name = os.environ["STATE_TABLE_NAME"]
-    limit = int(os.environ.get("MAX_ACTIVE_SUBAGENTS", "8"))
+    limit = int(os.environ.get("MAX_ACTIVE_SUBAGENTS", "12"))
     agent = {
         **_agent_key(orchestrator_id, agent_id),
         "orchestrator_id": orchestrator_id,
@@ -424,7 +424,7 @@ def _spawn(event: dict[str, Any]) -> dict[str, Any]:
             accepted=False,
             error="active_subagent_limit_reached",
             orchestrator_id=orchestrator_id,
-            max_active_subagents=int(os.environ.get("MAX_ACTIVE_SUBAGENTS", "8")),
+            max_active_subagents=int(os.environ.get("MAX_ACTIVE_SUBAGENTS", "12")),
         )
 
     try:
