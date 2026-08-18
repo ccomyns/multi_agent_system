@@ -155,14 +155,22 @@ class OrchestratorRunnerTests(unittest.TestCase):
             self.assertIn("and then finish normally", config)
             self.assertIn("following relevant same-site links", config)
             self.assertIn("Do not perform web scraping in the orchestrator", config)
-            self.assertIn("retain that rejected task", config)
-            self.assertIn("retry the rejected task until its spawn request is accepted", config)
+            self.assertIn("Retain every rejected task", config)
+            self.assertIn("retry it after a brief delay until accepted", config)
             self.assertIn("must never cause a planned task to be abandoned", config)
             self.assertIn("[mcp_servers.subagent_manager.tools.spawn_agent]", config)
             self.assertIn(
-                "[mcp_servers.subagent_manager.tools.collect_agent_results]",
+                "[mcp_servers.subagent_manager.tools.wait_on_any]",
                 config,
             )
+            self.assertNotIn("collect_agent_results", config)
+            self.assertIn("accepted, non-terminal active_agent_ids", config)
+            self.assertIn("returns after exactly one terminal event", config)
+            self.assertIn("refill the freed slot", config)
+            self.assertIn("Then immediately call wait_on_any again", config)
+            self.assertIn("no unlaunched tasks left", config)
+            self.assertIn("while active_agent_ids is non-empty", config)
+            self.assertIn("every accepted agent has returned a terminal event", config)
             self.assertIn('"ORCHESTRATOR_WORKSPACE"', config)
             self.assertIn('"SUBAGENT_MODEL"', config)
             self.assertEqual(

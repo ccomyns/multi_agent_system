@@ -18,7 +18,7 @@ from mcp.server.fastmcp import FastMCP
 
 
 MAX_TASK_LENGTH = 12_000
-MAX_AGENTS_PER_COLLECTION = 12
+MAX_AGENTS_PER_WAIT = 12
 MAX_SUMMARY_BYTES = 1024 * 1024
 MAX_RESULTS_BYTES = 50 * 1024 * 1024
 AGENT_ID_PATTERN = re.compile(r"^agent-[0-9a-f]{24}$")
@@ -29,11 +29,14 @@ mcp = FastMCP(
         "Use spawn_agent(task) only after the orchestration plan has been written. "
         "Each call stores a versioned task specification and asks the configured "
         "Lambda to reserve capacity and launch one EC2 subagent. Retrying the exact "
-        "same task within a job is idempotent. After launching all planned subagents, "
-        "use collect_agent_results(agent_ids) to wait for them in parallel. Collection "
-        "downloads each completed agent's explanatory summary and structured JSON data "
-        "into the orchestrator workspace. It uses completed.md or failure.md as the "
-        "terminal flag but does not download either marker."
+        "same task within a job is idempotent. Keep track of every accepted, non-terminal "
+        "agent ID and pass those IDs to wait_on_any(agent_ids). Each wait returns as soon "
+        "as one agent becomes terminal, downloads that agent's explanatory summary and "
+        "structured JSON data when it completed successfully, and returns the IDs that "
+        "still need another wait. Handle the event, refill the freed capacity when work "
+        "remains, then call wait_on_any again immediately while any accepted agent is "
+        "still non-terminal. The tool uses completed.md or failure.md as the terminal flag "
+        "but does not download either marker."
     ),
 )
 
@@ -259,23 +262,25 @@ def spawn_agent(task: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def collect_agent_results(
+def wait_on_any(
     agent_ids: list[str], timeout_seconds: int = 900, poll_interval_seconds: int = 5
 ) -> dict[str, Any]:
-    """Wait for subagents and download their summaries and structured JSON results.
+    """Wait until any one subagent is terminal and return that single event.
 
-    Launch all planned subagents before calling this batch collector. completed.md or
-    failure.md is the readiness flag. Completed agents are downloaded
-    beneath <orchestrator workspace>/subagents/<agent_id>/. The marker is checked with
-    S3 metadata and is not downloaded. If the timeout expires, pending IDs are returned
-    so the caller can continue other work or call this tool again.
+    Pass every accepted agent that has not produced a terminal event yet. completed.md
+    or failure.md is the readiness flag. The first terminal agent observed is returned;
+    a successful agent's data is downloaded beneath
+    <orchestrator workspace>/subagents/<agent_id>/. The marker is checked with S3
+    metadata and is not downloaded. remaining_agent_ids must be passed to the next
+    wait, together with any newly accepted agent IDs. If the timeout expires without
+    an event, call this tool again with the same IDs while agents are still active.
     """
 
     if not agent_ids:
         raise ValueError("agent_ids must not be empty")
-    if len(agent_ids) > MAX_AGENTS_PER_COLLECTION:
+    if len(agent_ids) > MAX_AGENTS_PER_WAIT:
         raise ValueError(
-            f"agent_ids must contain no more than {MAX_AGENTS_PER_COLLECTION} entries"
+            f"agent_ids must contain no more than {MAX_AGENTS_PER_WAIT} entries"
         )
     if len(set(agent_ids)) != len(agent_ids):
         raise ValueError("agent_ids must not contain duplicates")
@@ -296,13 +301,12 @@ def collect_agent_results(
     collection_root.mkdir(parents=True, mode=0o700, exist_ok=True)
 
     s3 = boto3.client("s3", region_name=region)
-    pending = set(agent_ids)
-    completed: list[dict[str, str]] = []
-    failed: list[dict[str, Any]] = []
+    remaining_agent_ids = list(agent_ids)
+    terminal: dict[str, Any] | None = None
     deadline = time.monotonic() + timeout_seconds
 
-    while pending:
-        for agent_id in list(pending):
+    while terminal is None:
+        for agent_id in remaining_agent_ids:
             prefix = f"jobs/{job_id}/agents/{agent_id}"
             if s3_object_exists(s3, bucket, f"{prefix}/result/completed.md"):
                 try:
@@ -320,21 +324,19 @@ def collect_agent_results(
                         orchestrator_instance_id,
                         agent_id,
                     )
-                    completed.append(
-                        download_agent_data(
+                    terminal = {
+                        "state": "completed",
+                        **download_agent_data(
                             s3, bucket, job_id, agent_id, collection_root
-                        )
-                    )
+                        ),
+                    }
                 except Exception as error:
-                    failed.append(
-                        {
-                            "agent_id": agent_id,
-                            "state": "collection_failed",
-                            "error": str(error)[:1000],
-                        }
-                    )
-                pending.remove(agent_id)
-                continue
+                    terminal = {
+                        "agent_id": agent_id,
+                        "state": "collection_failed",
+                        "error": str(error)[:1000],
+                    }
+                break
 
             if s3_object_exists(s3, bucket, f"{prefix}/result/failure.md"):
                 try:
@@ -352,37 +354,32 @@ def collect_agent_results(
                         orchestrator_instance_id,
                         agent_id,
                     )
-                    failed.append(
-                        {
-                            "agent_id": agent_id,
-                            "state": "failed",
-                            "error_type": failed_status.get("error_type"),
-                            "error": failed_status.get("error"),
-                        }
-                    )
+                    terminal = {
+                        "agent_id": agent_id,
+                        "state": "failed",
+                        "error_type": failed_status.get("error_type"),
+                        "error": failed_status.get("error"),
+                    }
                 except Exception as error:
-                    failed.append(
-                        {
-                            "agent_id": agent_id,
-                            "state": "collection_failed",
-                            "error": str(error)[:1000],
-                        }
-                    )
-                pending.remove(agent_id)
+                    terminal = {
+                        "agent_id": agent_id,
+                        "state": "collection_failed",
+                        "error": str(error)[:1000],
+                    }
+                break
 
-        if not pending or time.monotonic() >= deadline:
+        if terminal is not None or time.monotonic() >= deadline:
             break
         time.sleep(min(poll_interval_seconds, max(0.0, deadline - time.monotonic())))
 
-    completed.sort(key=lambda item: item["agent_id"])
-    failed.sort(key=lambda item: item["agent_id"])
-    pending_ids = sorted(pending)
+    if terminal is not None:
+        remaining_agent_ids.remove(terminal["agent_id"])
     return {
-        "all_terminal": not pending_ids,
-        "timed_out": bool(pending_ids),
-        "completed": completed,
-        "failed": failed,
-        "pending": pending_ids,
+        "event_received": terminal is not None,
+        "timed_out": terminal is None,
+        "terminal": terminal,
+        "remaining_agent_ids": remaining_agent_ids,
+        "all_terminal": not remaining_agent_ids,
         "terminal_markers_downloaded": False,
     }
 

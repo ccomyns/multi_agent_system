@@ -26,17 +26,17 @@ async def verify() -> None:
             response = await session.list_tools()
 
     tools = {tool.name: tool for tool in response.tools}
-    assert set(tools) == {"spawn_agent", "collect_agent_results"}, tools
+    assert set(tools) == {"spawn_agent", "wait_on_any"}, tools
     assert set(tools["spawn_agent"].inputSchema["properties"]) == {"task"}
     assert tools["spawn_agent"].inputSchema["required"] == ["task"]
-    assert set(tools["collect_agent_results"].inputSchema["properties"]) == {
+    assert set(tools["wait_on_any"].inputSchema["properties"]) == {
         "agent_ids",
         "timeout_seconds",
         "poll_interval_seconds",
     }
-    assert tools["collect_agent_results"].inputSchema["required"] == ["agent_ids"]
+    assert tools["wait_on_any"].inputSchema["required"] == ["agent_ids"]
 
 
 if __name__ == "__main__":
     asyncio.run(verify())
-    print("MCP handshake verified: spawn and collection tools are discoverable")
+    print("MCP handshake verified: spawn and wait-on-any tools are discoverable")

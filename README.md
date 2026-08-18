@@ -58,10 +58,12 @@ supervisor adds the trusted agent ID when it uploads the dataset as
 `results_<agent_id>.json`, then uploads those data products,
 writes a brief `/result/completed.md` or `/result/failure.md` terminal marker,
 and publishes a machine-readable status record before the instance shuts down.
-The orchestrator's local MCP server polls for those terminal markers without
-downloading them, then downloads only the summary and JSON dataset. The
-30-minute TTL is a hard backstop for hung runs, not the normal completion
-mechanism.
+The orchestrator's local MCP server waits on the active agent IDs and returns as
+soon as any one terminal marker appears, without downloading the marker itself.
+It downloads only that agent's summary and JSON dataset, letting the orchestrator
+process the result, refill the freed slot, and immediately wait on the remaining
+agents. The 30-minute TTL is a hard backstop for hung runs, not the normal
+completion mechanism.
 
 Before a successful orchestrator shuts down, it uploads three durable outputs
 under `jobs/<job_id>/result/`: `plan.md`, the narrative `final.md`, and a
@@ -149,7 +151,8 @@ On the new-job page, a user can drop one JSON or Excel anchor file anywhere in
 the UI (or use the paperclip button) before launching the job. Files are limited
 to 25 MB and stored at the private `jobs/<job_id>/input/anchor-data` key in the agent
 workspace bucket. Only the orchestrator can download the raw file; it passes
-the values needed for each anchor record to subagents in successive batches.
+the values needed for each anchor record to subagents through a rolling window
+of up to twelve active agents.
 
 Completed data-mining jobs preferentially publish a versioned one- or two-table
 JSON result. The orchestrator detail page renders compliant results as a
@@ -234,8 +237,8 @@ are separate so one can be rebuilt without unnecessarily rebuilding the other.
 The current versions are:
 
 ```hcl
-orchestrator_image_version = "1.0.10"
-agent_image_version        = "1.0.6"
+orchestrator_image_version = "1.1.2"
+agent_image_version        = "1.1.1"
 ```
 
 Increment `orchestrator_image_version` for orchestrator runtime or recipe

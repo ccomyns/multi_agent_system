@@ -155,7 +155,7 @@ class SpawnAgentMcpTests(unittest.TestCase):
         self.assertEqual(result["error"], "active_subagent_limit_reached")
         self.assertEqual(result["max_active_subagents"], 8)
 
-    def test_collect_agent_results_downloads_summary_and_json_but_not_marker(self) -> None:
+    def test_wait_on_any_downloads_summary_and_json_but_not_marker(self) -> None:
         agent_id = "agent-0123456789abcdef01234567"
         s3 = Mock()
 
@@ -200,15 +200,18 @@ class SpawnAgentMcpTests(unittest.TestCase):
             }
             with patch.dict(os.environ, environment, clear=True):
                 with patch.object(server_module.boto3, "client", return_value=s3):
-                    result = server_module.collect_agent_results([agent_id], timeout_seconds=0)
+                    result = server_module.wait_on_any([agent_id], timeout_seconds=0)
 
-            completed = result["completed"][0]
-            self.assertEqual(Path(completed["summary_path"]).read_text(), "Approach and findings")
+            terminal = result["terminal"]
+            self.assertEqual(terminal["state"], "completed")
+            self.assertEqual(Path(terminal["summary_path"]).read_text(), "Approach and findings")
             self.assertEqual(
-                json.loads(Path(completed["results_path"]).read_text()),
+                json.loads(Path(terminal["results_path"]).read_text()),
                 {"records": [{"value": 42}]},
             )
+            self.assertTrue(result["event_received"])
             self.assertTrue(result["all_terminal"])
+            self.assertEqual(result["remaining_agent_ids"], [])
             self.assertFalse(result["terminal_markers_downloaded"])
             requested_keys = [call.kwargs["Key"] for call in s3.get_object.call_args_list]
             self.assertNotIn(
@@ -222,7 +225,7 @@ class SpawnAgentMcpTests(unittest.TestCase):
                 )
             )
 
-    def test_collect_agent_results_returns_pending_after_timeout(self) -> None:
+    def test_wait_on_any_returns_remaining_ids_after_timeout(self) -> None:
         agent_id = "agent-0123456789abcdef01234567"
         s3 = Mock()
 
@@ -237,13 +240,15 @@ class SpawnAgentMcpTests(unittest.TestCase):
             }
             with patch.dict(os.environ, environment, clear=True):
                 with patch.object(server_module.boto3, "client", return_value=s3):
-                    result = server_module.collect_agent_results([agent_id], timeout_seconds=0)
+                    result = server_module.wait_on_any([agent_id], timeout_seconds=0)
 
         self.assertFalse(result["all_terminal"])
+        self.assertFalse(result["event_received"])
         self.assertTrue(result["timed_out"])
-        self.assertEqual(result["pending"], [agent_id])
+        self.assertIsNone(result["terminal"])
+        self.assertEqual(result["remaining_agent_ids"], [agent_id])
 
-    def test_collection_reports_subagent_failure_without_downloading_marker(self) -> None:
+    def test_wait_on_any_reports_subagent_failure_without_downloading_marker(self) -> None:
         agent_id = "agent-0123456789abcdef01234567"
         s3 = Mock()
 
@@ -277,11 +282,67 @@ class SpawnAgentMcpTests(unittest.TestCase):
             }
             with patch.dict(os.environ, environment, clear=True):
                 with patch.object(server_module.boto3, "client", return_value=s3):
-                    result = server_module.collect_agent_results([agent_id], timeout_seconds=0)
+                    result = server_module.wait_on_any([agent_id], timeout_seconds=0)
 
         self.assertTrue(result["all_terminal"])
-        self.assertEqual(result["failed"][0]["state"], "failed")
-        self.assertEqual(result["failed"][0]["error"], "research failed")
+        self.assertEqual(result["terminal"]["state"], "failed")
+        self.assertEqual(result["terminal"]["error"], "research failed")
+
+    def test_wait_on_any_returns_when_one_of_multiple_agents_is_terminal(self) -> None:
+        pending_id = "agent-0123456789abcdef01234567"
+        completed_id = "agent-fedcba9876543210fedcba98"
+        s3 = Mock()
+
+        class MissingObject(Exception):
+            response = {"Error": {"Code": "NoSuchKey"}}
+
+        completed_status = {
+            "schema_version": 1,
+            "state": "completed",
+            "job_id": self.environment["JOB_ID"],
+            "orchestrator_instance_id": self.environment["ORCHESTRATOR_INSTANCE_ID"],
+            "agent_id": completed_id,
+        }
+
+        def head_object(**kwargs):
+            key = kwargs["Key"]
+            if completed_id in key and key.endswith("/result/completed.md"):
+                return {}
+            raise MissingObject()
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            completed_prefix = f"jobs/{self.environment['JOB_ID']}/agents/{completed_id}"
+            objects = {
+                f"{completed_prefix}/status/completed.json": json.dumps(
+                    completed_status
+                ).encode("utf-8"),
+                f"{completed_prefix}/summary/summary.md": b"Completed second agent",
+                f"{completed_prefix}/summary/results_{completed_id}.json": b'{"value":2}',
+            }
+            if key not in objects:
+                raise MissingObject()
+            return {"Body": io.BytesIO(objects[key]), "ContentLength": len(objects[key])}
+
+        s3.head_object.side_effect = head_object
+        s3.get_object.side_effect = get_object
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = {
+                **self.environment,
+                "ORCHESTRATOR_WORKSPACE": temporary,
+            }
+            with patch.dict(os.environ, environment, clear=True):
+                with patch.object(server_module.boto3, "client", return_value=s3):
+                    with patch.object(server_module.time, "sleep") as sleep:
+                        result = server_module.wait_on_any([pending_id, completed_id])
+
+        sleep.assert_not_called()
+        self.assertTrue(result["event_received"])
+        self.assertFalse(result["timed_out"])
+        self.assertFalse(result["all_terminal"])
+        self.assertEqual(result["terminal"]["agent_id"], completed_id)
+        self.assertEqual(result["terminal"]["state"], "completed")
+        self.assertEqual(result["remaining_agent_ids"], [pending_id])
 
 
 if __name__ == "__main__":

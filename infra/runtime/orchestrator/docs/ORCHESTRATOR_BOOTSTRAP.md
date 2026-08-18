@@ -94,7 +94,7 @@ syntactically invalid output still fails the job.
 
 The runtime includes `/opt/multi-agent/runtime/bin/spawn-agent-mcp`, a required
 stdio MCP server that exposes `spawn_agent(task)` and
-`collect_agent_results(agent_ids, timeout_seconds, poll_interval_seconds)`.
+`wait_on_any(agent_ids, timeout_seconds, poll_interval_seconds)`.
 Codex starts it from the job-local MCP configuration. The server uses the
 orchestrator EC2 instance ID as its grouping identity and derives job identity,
 Lambda routing, Luna model selection, and deterministic agent IDs from trusted
@@ -111,19 +111,24 @@ input, runs Codex, and publishes:
 - `jobs/<job_id>/agents/<agent_id>/result/completed.md` or `failure.md`
 - `jobs/<job_id>/agents/<agent_id>/status/completed.json` or `failed.json`
 
-The spawn call returns after EC2 accepts the instance launch. After launching
-the planned batch, the orchestrator passes the accepted agent IDs to
-`collect_agent_results`. That tool checks the exact `completed.md` and
-`failure.md` S3 keys with metadata-only requests, then downloads only
-`summary.md` and `results_<agent_id>.json` into
-`<orchestrator workspace>/subagents/<agent_id>/`, and returns their local paths.
-The terminal Markdown markers remain in S3 and are not returned to Codex. A
-bounded collection timeout returns pending IDs so the orchestrator can call the
-tool again without relaunching agents.
+The spawn call returns after EC2 accepts the instance launch. The orchestrator
+tracks all accepted, non-terminal agent IDs and passes that active set to
+`wait_on_any`. The tool checks the exact `completed.md` and `failure.md` S3 keys
+with metadata-only requests and returns as soon as it observes one terminal
+agent. For a successful agent it downloads only `summary.md` and
+`results_<agent_id>.json` into
+`<orchestrator workspace>/subagents/<agent_id>/` and returns their local paths.
+The response also includes `remaining_agent_ids`, which the orchestrator passes
+to its next wait along with any newly accepted agent. The terminal Markdown
+markers remain in S3 and are not returned to Codex. A bounded wait timeout
+returns the unchanged IDs so the orchestrator can immediately wait again.
 
 Only twelve subagents may be active at once. If a later planned spawn returns
-`active_subagent_limit_reached`, the orchestrator retains that task, collects
-the accepted batch, and then retries the rejected task with brief delays until
-capacity reconciliation allows it to launch. Rejected IDs are not collected
-until a retry has actually been accepted. This permits jobs with more than twelve
-subtasks to run in successive batches without silently dropping work.
+`active_subagent_limit_reached`, the orchestrator retains that task and never
+waits on its unaccepted ID. Each terminal event frees a logical slot: the
+orchestrator retries one retained task with brief delays until capacity
+reconciliation allows it to launch, adds the accepted ID to the active set,
+processes the returned result, and immediately calls `wait_on_any` again. It
+continues waiting while any accepted agent remains even when there are no more
+tasks to launch. This rolling window keeps available capacity filled without
+making fast agents wait behind the slowest agent in a batch.
