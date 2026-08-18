@@ -19,9 +19,6 @@ resource "aws_lambda_function" "subagent_manager" {
   timeout       = 60
   memory_size   = 256
 
-  # Keep the manager disabled while the queue-era infrastructure is removed.
-  reserved_concurrent_executions = 0
-
   filename         = data.archive_file.subagent_manager.output_path
   source_code_hash = data.archive_file.subagent_manager.output_base64sha256
 
