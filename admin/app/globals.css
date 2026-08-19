@@ -848,6 +848,303 @@ h1 {
   transform: translateY(-1px);
 }
 
+.software-repository-modal-backdrop {
+  position: fixed;
+  z-index: 200;
+  inset: 0;
+  display: grid;
+  padding: 24px;
+  overflow-y: auto;
+  background: rgb(13 31 54 / 56%);
+  backdrop-filter: blur(4px);
+  place-items: center;
+  animation: software-repository-backdrop-in 160ms ease-out;
+}
+
+.software-repository-modal {
+  width: min(540px, 100%);
+  max-height: calc(100vh - 48px);
+  padding: 26px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 18px;
+  box-shadow: 0 28px 80px rgb(13 31 54 / 30%);
+  animation: software-repository-modal-in 180ms ease-out;
+}
+
+.software-repository-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.software-repository-modal-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 13px;
+}
+
+.software-repository-modal-heading > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.software-repository-modal-heading h2 {
+  color: var(--text-strong);
+  font-size: 20px;
+  font-weight: 740;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+
+.software-repository-modal-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  color: #ffffff;
+  background: linear-gradient(145deg, #3e7dbc, #245b96);
+  border-radius: 12px;
+  box-shadow: 0 8px 18px rgb(47 111 179 / 22%);
+  place-items: center;
+}
+
+.software-repository-modal-header > button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  padding: 0;
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  cursor: pointer;
+  place-items: center;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+
+.software-repository-modal-header > button:hover {
+  color: var(--text-strong);
+  background: var(--surface-blue);
+  border-color: #aec8e3;
+}
+
+.software-repository-modal form {
+  display: grid;
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.software-repository-form-fields {
+  display: grid;
+  gap: 17px;
+}
+
+.software-repository-form-fields label {
+  display: grid;
+  gap: 7px;
+}
+
+.software-repository-form-fields label > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-strong);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.software-repository-form-fields label > span strong,
+.software-repository-form-fields label > span em {
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 750;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.software-repository-form-fields label > span strong {
+  color: var(--blue-strong);
+}
+
+.software-repository-form-fields label > span em {
+  color: var(--text-muted);
+}
+
+.software-repository-form-fields input,
+.software-repository-form-fields textarea {
+  width: 100%;
+  padding: 11px 12px;
+  color: var(--text-strong);
+  background: #fbfdff;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  outline: 0;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.software-repository-form-fields textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.software-repository-form-fields input::placeholder,
+.software-repository-form-fields textarea::placeholder {
+  color: #8b9aae;
+}
+
+.software-repository-form-fields input:hover,
+.software-repository-form-fields textarea:hover {
+  border-color: #aec0d3;
+}
+
+.software-repository-form-fields input:focus,
+.software-repository-form-fields textarea:focus {
+  background: #ffffff;
+  border-color: #78a7d5;
+  box-shadow: 0 0 0 4px rgb(67 127 187 / 10%);
+}
+
+.software-repository-form-fields label > small {
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.software-repository-form-fields label:last-child > small {
+  justify-self: end;
+}
+
+.software-repository-privacy-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 13px;
+  color: var(--blue-strong);
+  background: var(--surface-blue);
+  border: 1px solid #cfe0f1;
+  border-radius: 10px;
+}
+
+.software-repository-privacy-note > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.software-repository-privacy-note > span {
+  display: grid;
+  gap: 3px;
+  color: #58718c;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.software-repository-privacy-note strong {
+  color: var(--text-strong);
+  font-size: 10px;
+}
+
+.software-repository-form-error {
+  padding: 10px 11px;
+  color: var(--red);
+  background: var(--red-soft);
+  border: 1px solid #f1cccc;
+  border-radius: 9px;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.software-repository-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  padding-top: 2px;
+}
+
+.software-repository-modal-actions button {
+  display: inline-flex;
+  min-height: 39px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 16px;
+  border-radius: 9px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 770;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+
+.software-repository-cancel {
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+}
+
+.software-repository-cancel:hover {
+  background: var(--surface-muted);
+  border-color: #aec0d3;
+}
+
+.software-repository-create {
+  color: #ffffff;
+  background: var(--blue);
+  border: 1px solid var(--blue);
+  box-shadow: 0 7px 16px rgb(47 111 179 / 18%);
+}
+
+.software-repository-create:hover:not(:disabled) {
+  background: var(--blue-strong);
+  border-color: var(--blue-strong);
+  transform: translateY(-1px);
+}
+
+.software-repository-create:disabled {
+  color: #8c9cad;
+  background: #e8edf3;
+  border-color: #dce3eb;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.software-repository-modal-header > button:focus-visible,
+.software-repository-modal-actions button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+
+@keyframes software-repository-backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes software-repository-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
 .grid-surface {
   background-color: var(--surface-muted);
   background-image:
@@ -3758,6 +4055,27 @@ tbody tr:hover {
 
   .software-idea-panel textarea {
     min-height: 140px;
+  }
+
+  .software-repository-modal-backdrop {
+    padding: 12px;
+    place-items: end center;
+  }
+
+  .software-repository-modal {
+    width: 100%;
+    max-height: calc(100vh - 24px);
+    padding: 21px 18px 18px;
+    border-radius: 16px;
+  }
+
+  .software-repository-modal-heading h2 {
+    font-size: 18px;
+  }
+
+  .software-repository-modal-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 
   .job-home-content,

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, RefreshCw } from "lucide-react";
+import { ChevronDown, GitBranch, LockKeyhole, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Sidebar } from "@/components/sidebar";
@@ -22,11 +22,24 @@ function responseError(value: unknown, fallback: string) {
 
 export default function SoftwareBuilderPage() {
   const [contextOpen, setContextOpen] = useState(false);
+  const [createRepositoryOpen, setCreateRepositoryOpen] = useState(false);
+  const [repositoryName, setRepositoryName] = useState("");
+  const [repositoryDescription, setRepositoryDescription] = useState("");
+  const [repositoryFormError, setRepositoryFormError] = useState<string | null>(
+    null,
+  );
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [selectedProject, setSelectedProject] = useState("");
   const contextPickerRef = useRef<HTMLDivElement>(null);
+  const createRepositoryButtonRef = useRef<HTMLButtonElement>(null);
+
+  const closeCreateRepository = useCallback(() => {
+    setCreateRepositoryOpen(false);
+    setRepositoryFormError(null);
+    window.requestAnimationFrame(() => createRepositoryButtonRef.current?.focus());
+  }, []);
 
   const loadProjects = useCallback(async () => {
     setProjectsLoading(true);
@@ -79,6 +92,23 @@ export default function SoftwareBuilderPage() {
     };
   }, [contextOpen]);
 
+  useEffect(() => {
+    if (!createRepositoryOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") closeCreateRepository();
+    }
+
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [closeCreateRepository, createRepositoryOpen]);
+
   function toggleContextMenu() {
     if (contextOpen) {
       setContextOpen(false);
@@ -86,6 +116,33 @@ export default function SoftwareBuilderPage() {
     }
     setContextOpen(true);
     void loadProjects();
+  }
+
+  function openCreateRepository() {
+    setRepositoryName("");
+    setRepositoryDescription("");
+    setRepositoryFormError(null);
+    setCreateRepositoryOpen(true);
+  }
+
+  function submitCreateRepository(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const normalizedName = repositoryName.trim();
+    if (!normalizedName) {
+      setRepositoryFormError("Enter a repository name.");
+      return;
+    }
+    if (!/^[A-Za-z0-9._-]+$/.test(normalizedName)) {
+      setRepositoryFormError(
+        "Use only letters, numbers, periods, hyphens, and underscores.",
+      );
+      return;
+    }
+
+    setRepositoryFormError(
+      "GitHub is not connected yet. Add the server-side GitHub App endpoint before creating repositories.",
+    );
   }
 
   return (
@@ -113,7 +170,13 @@ export default function SoftwareBuilderPage() {
                 <h2>GITHUB REPOS</h2>
                 <div className="software-builder-panel-body">
                   <div className="software-repo-controls">
-                    <button type="button">Create a new project</button>
+                    <button
+                      ref={createRepositoryButtonRef}
+                      type="button"
+                      onClick={openCreateRepository}
+                    >
+                      Create a new project
+                    </button>
                     <label className="sr-only" htmlFor="software-project">
                       Pick an existing project
                     </label>
@@ -211,6 +274,120 @@ export default function SoftwareBuilderPage() {
           </div>
         </main>
       </div>
+
+      {createRepositoryOpen ? (
+        <div
+          className="software-repository-modal-backdrop"
+          onMouseDown={closeCreateRepository}
+        >
+          <section
+            className="software-repository-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="software-repository-modal-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="software-repository-modal-header">
+              <div className="software-repository-modal-heading">
+                <span className="software-repository-modal-icon" aria-hidden="true">
+                  <GitBranch size={21} strokeWidth={1.8} />
+                </span>
+                <div>
+                  <h2 id="software-repository-modal-title">New GitHub Repo</h2>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Close create repository dialog"
+                onClick={closeCreateRepository}
+              >
+                <X size={17} aria-hidden="true" />
+              </button>
+            </header>
+
+            <form onSubmit={submitCreateRepository}>
+              <div className="software-repository-form-fields">
+                <label htmlFor="software-repository-name">
+                  <span>
+                    Repository name <strong>Required</strong>
+                  </span>
+                  <input
+                    autoFocus
+                    id="software-repository-name"
+                    name="repositoryName"
+                    type="text"
+                    required
+                    maxLength={100}
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={repositoryName}
+                    placeholder="e.g. customer-insights-dashboard"
+                    onChange={(event) => {
+                      setRepositoryName(event.target.value);
+                      setRepositoryFormError(null);
+                    }}
+                  />
+                  <small>
+                    Letters, numbers, periods, hyphens, and underscores only.
+                  </small>
+                </label>
+
+                <label htmlFor="software-repository-description">
+                  <span>
+                    Description <em>Optional</em>
+                  </span>
+                  <textarea
+                    id="software-repository-description"
+                    name="repositoryDescription"
+                    rows={4}
+                    maxLength={350}
+                    value={repositoryDescription}
+                    placeholder="What does this repository do?"
+                    onChange={(event) => {
+                      setRepositoryDescription(event.target.value);
+                      setRepositoryFormError(null);
+                    }}
+                  />
+                  <small>{repositoryDescription.length}/350 characters</small>
+                </label>
+              </div>
+
+              <div className="software-repository-privacy-note">
+                <LockKeyhole size={15} strokeWidth={1.8} aria-hidden="true" />
+                <span>
+                  <strong>Private by default</strong>
+                  Repository credentials will stay on the server, never in the
+                  browser.
+                </span>
+              </div>
+
+              {repositoryFormError ? (
+                <div className="software-repository-form-error" role="alert">
+                  {repositoryFormError}
+                </div>
+              ) : null}
+
+              <footer className="software-repository-modal-actions">
+                <button
+                  className="software-repository-cancel"
+                  type="button"
+                  onClick={closeCreateRepository}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="software-repository-create"
+                  type="submit"
+                  disabled={!repositoryName.trim()}
+                >
+                  <GitBranch size={15} strokeWidth={1.9} aria-hidden="true" />
+                  Create repository
+                </button>
+              </footer>
+            </form>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
