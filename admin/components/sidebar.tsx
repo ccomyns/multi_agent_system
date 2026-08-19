@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  BriefcaseBusiness,
+  Bot,
   Database,
   Layers3,
   Presentation,
@@ -10,8 +10,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const NAV_ITEMS = [
-  { href: "/jobs", label: "Launch a Job", Icon: BriefcaseBusiness },
-  { href: "/database", label: "Database Management", Icon: Database },
+  { href: "/jobs", label: "Data Miner", Icon: Database },
+  { href: "/software", label: "Software Builder", Icon: Bot },
   { href: "/slides", label: "Slide Deck Builder", Icon: Presentation },
 ] as const;
 

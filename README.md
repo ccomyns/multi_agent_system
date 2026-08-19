@@ -161,15 +161,13 @@ still completes normally and is displayed in a formatted JSON fallback view.
 
 To launch real jobs, copy `admin/.env.example` to `admin/.env.local` and set
 `JOBS_TABLE_NAME`, `ORCHESTRATOR_LAUNCH_TEMPLATE_ID`,
-`ORCHESTRATOR_LAUNCH_TEMPLATE_VERSION`, `AUDIT_BUCKET_NAME`, and `AWS_REGION`
+`ORCHESTRATOR_LAUNCH_TEMPLATE_VERSION`, and `AWS_REGION`
 from the Terraform outputs. Launching a job starts a billable `t3.large`
 orchestrator that runs until the job is ended from the console.
 
-The Database Management page provides read-only previews of all three S3
-buckets and both DynamoDB tables. Set `AGENT_WORKSPACE_BUCKET_NAME`,
-`GLOBAL_MEMORY_BUCKET_NAME`, and `STATE_TABLE_NAME` from the corresponding
-Terraform outputs; it shares the jobs table and audit bucket settings above.
-The S3 and DynamoDB previews show at most the first 100 records per resource.
+Set `AGENT_WORKSPACE_BUCKET_NAME`, `GLOBAL_MEMORY_BUCKET_NAME`, and
+`STATE_TABLE_NAME` from the corresponding Terraform outputs for anchor files,
+job monitoring, result artifacts, and project uploads.
 
 Frontend validation:
 
