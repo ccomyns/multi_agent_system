@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Clock3, Database, RefreshCw } from "lucide-react";
+import { ArrowLeft, Clock3, Database, RefreshCw, Upload } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
@@ -183,6 +183,9 @@ export function AgentTelemetryDetail({
               >
                 <Database size={12} aria-hidden="true" /> Final Result
               </button>
+              <Link href={`/jobs/${encodeURIComponent(jobId)}/orchestrator/upload`}>
+                <Upload size={12} aria-hidden="true" /> Upload to Project
+              </Link>
             </div>
           ) : null}
         </header>

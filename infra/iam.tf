@@ -390,6 +390,12 @@ resource "aws_iam_policy" "admin_server" {
           "${aws_s3_bucket.audit.arn}/*",
           "${aws_s3_bucket.global_memory.arn}/*"
         ]
+      },
+      {
+        Sid      = "WriteGlobalMemoryProjects"
+        Effect   = "Allow"
+        Action   = "s3:PutObject"
+        Resource = "${aws_s3_bucket.global_memory.arn}/*"
       }
     ]
   })
