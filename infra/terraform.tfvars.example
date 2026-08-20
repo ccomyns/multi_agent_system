@@ -1,0 +1,7 @@
+# Non-secret GitHub App configuration. Copy this file to terraform.tfvars,
+# which is gitignored, and replace the Client ID with the writer App's value.
+github_organization        = "mas-workspace"
+github_writer_app_client_id = "Iv_REPLACE_WITH_WRITER_APP_CLIENT_ID"
+
+# Optional. The default is /<project_name>/github/writer-private-key.
+# github_writer_private_key_ssm_parameter_name = "/financial-research-agents/github/writer-private-key"

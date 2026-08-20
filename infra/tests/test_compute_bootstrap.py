@@ -29,6 +29,8 @@ class SandboxDependencyTests(unittest.TestCase):
         self.assertNotIn("bubblewrap", normal_bootstrap)
         self.assertNotIn("danger-full-access", normal_bootstrap)
         self.assertNotIn("stress", compute.lower())
+        self.assertIn("GITHUB_TOKEN_BROKER_FUNCTION_NAME=", compute)
+        self.assertNotIn("GITHUB_WRITER_PRIVATE_KEY", compute)
 
 
 if __name__ == "__main__":

@@ -61,6 +61,7 @@ crash.*.log
 .tools/
 .playwright-mcp/
 infra/subagent-manager.zip
+infra/github-token-broker.zip
 infra/orchestrator-runtime.zip
 infra/subagent-runtime.zip
 

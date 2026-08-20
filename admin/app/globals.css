@@ -555,7 +555,9 @@ h1 {
 }
 
 .software-builder-panel,
-.software-context-panel {
+.software-context-panel,
+.software-create-repository-trigger,
+.software-repository-picker-panel {
   background: #fbfdff;
   border: 1px solid #b7c7d8;
   border-radius: 16px;
@@ -616,34 +618,242 @@ h1 {
 
 .software-repo-controls {
   display: grid;
-  width: min(430px, 100%);
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 10px;
 }
 
-.software-repo-controls button,
-.software-repo-controls select {
+.software-create-repository-trigger,
+.software-repository-picker-panel {
+  display: flex;
   width: 100%;
-  min-height: 42px;
-  padding: 0 13px;
+  min-height: 66px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 18px;
   color: var(--text-strong);
-  background: #fbfdff;
-  border: 1px solid var(--border-strong);
-  border-radius: 9px;
   cursor: pointer;
   font: inherit;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
+  letter-spacing: 0.035em;
   text-align: left;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
 }
 
-.software-repo-controls button:hover,
-.software-repo-controls select:hover {
-  background: var(--surface-blue);
+.software-create-repository-trigger > span,
+.software-repository-picker-panel > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.software-create-repository-trigger strong,
+.software-repository-picker-panel strong {
+  font: inherit;
+}
+
+.software-create-repository-trigger small,
+.software-repository-picker-panel small {
+  overflow: hidden;
+  color: var(--blue-strong);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.software-create-repository-trigger > svg,
+.software-repository-picker-panel > svg {
+  flex: 0 0 auto;
+  color: var(--blue);
+}
+
+.software-repository-picker-panel > svg {
+  transition: transform 140ms ease;
+}
+
+.software-create-repository-trigger:hover,
+.software-repository-picker-panel:hover {
+  background: #f8fbff;
   border-color: #aec8e3;
 }
 
-.software-repo-controls button:focus-visible,
-.software-repo-controls select:focus-visible,
+.software-repository-picker-panel.is-open {
+  background: #f8fbff;
+  border-color: #9fb4c9;
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+  box-shadow: none;
+}
+
+.software-repository-picker-panel.is-open > svg {
+  transform: rotate(180deg);
+}
+
+.software-repository-picker {
+  width: 100%;
+}
+
+.software-repository-picker-menu {
+  max-height: 280px;
+  padding: 8px;
+  margin-top: -1px;
+  overflow-y: auto;
+  background: #fbfdff;
+  border: 1px solid #9fb4c9;
+  border-top: 1px solid #d3deea;
+  border-radius: 0 0 16px 16px;
+  box-shadow: 0 12px 24px rgb(42 76 116 / 9%);
+}
+
+.software-repository-options {
+  display: grid;
+  gap: 3px;
+}
+
+.software-repository-options > button {
+  display: flex;
+  min-height: 50px;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  color: var(--text-strong);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.software-repository-options > button > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.software-repository-options strong,
+.software-repository-options small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.software-repository-options strong {
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.software-repository-options small {
+  color: var(--text-muted);
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+.software-repository-options em {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  color: #647b94;
+  background: #edf3f9;
+  border: 1px solid #d5e0eb;
+  border-radius: 999px;
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 780;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.software-repository-options > button:hover {
+  color: var(--blue-strong);
+  background: var(--surface-blue);
+  border-color: #cedff0;
+}
+
+.software-repository-options > button.is-selected {
+  color: var(--blue-strong);
+  background: var(--surface-blue);
+  border-color: #a9c6e2;
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+
+.software-repository-pending {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  margin-top: 12px;
+  color: var(--blue-strong);
+  background: var(--surface-blue);
+  border: 1px solid #cbdff2;
+  border-radius: 10px;
+}
+
+.software-repository-pending > svg {
+  flex: 0 0 auto;
+}
+
+.software-repository-pending > span {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+  color: #58718c;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.software-repository-pending strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.software-repository-pending > button {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  color: var(--blue-strong);
+  background: #ffffff;
+  border: 1px solid #b9d1e8;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 8px;
+  font-weight: 760;
+}
+
+.software-repository-submit-state {
+  padding: 9px 11px;
+  margin-top: 10px;
+  color: #276944;
+  background: #eff9f3;
+  border: 1px solid #c8e7d4;
+  border-radius: 9px;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.software-repository-submit-state.is-error {
+  color: var(--red);
+  background: var(--red-soft);
+  border-color: #f1cccc;
+}
+
+.software-create-repository-trigger:focus-visible,
+.software-repository-picker-panel:focus-visible,
+.software-repository-picker-menu button:focus-visible,
+.software-repository-pending > button:focus-visible,
 .software-context-panel:focus-visible,
 .software-context-menu button:focus-visible,
 .software-builder-footer-button:focus-visible,
@@ -842,10 +1052,18 @@ h1 {
 }
 
 .software-builder-footer-button:hover,
-.software-builder-submit:hover {
+.software-builder-submit:hover:not(:disabled) {
   background: var(--blue-strong);
   border-color: var(--blue-strong);
   transform: translateY(-1px);
+}
+
+.software-builder-submit:disabled {
+  color: #8c9cad;
+  background: #e8edf3;
+  border-color: #dce3eb;
+  box-shadow: none;
+  cursor: not-allowed;
 }
 
 .software-repository-modal-backdrop {
@@ -4055,6 +4273,10 @@ tbody tr:hover {
 
   .software-idea-panel textarea {
     min-height: 140px;
+  }
+
+  .software-repo-controls {
+    grid-template-columns: 1fr;
   }
 
   .software-repository-modal-backdrop {

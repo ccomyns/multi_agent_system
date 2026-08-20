@@ -7,6 +7,11 @@ current implementation contains:
 - On-demand `t3.large` orchestrator launch templates; Terraform does not create
   a persistent orchestrator instance.
 - A Lambda function that launches subagent EC2 instances.
+- A separate GitHub credential-broker Lambda that mints one-hour writer tokens
+  for exactly the repository assigned to an active software-builder job.
+- A trusted orchestrator entrypoint that dispatches data-mining jobs to the
+  existing multi-agent runner and software-builder jobs to an independent
+  repository-root runner.
 - A real subagent runtime that downloads S3 task specifications, runs Codex,
   publishes a research summary, structured JSON dataset, and terminal marker,
   then self-terminates.
@@ -30,7 +35,15 @@ across concurrent Lambda containers.
 ```text
 Browser --job_id--> Admin server --DynamoDB transaction--> job record + active-job lock
                           |
+                          +--conditional write--> trusted GitHub repository assignment
+                          |
                           +--launch template--> EC2 orchestrator (one per run)
+                                      |
+                                      +--invoke--> GitHub token broker
+                                      |                 |
+                                      |                 +--> job + assignment validation
+                                      |                 +--> SSM/KMS writer App key
+                                      |                 +--> one-repository GitHub token
                                       |
                                       v
                              Lambda subagent manager -----> EC2 subagents
@@ -65,6 +78,14 @@ process the result, refill the freed slot, and immediately wait on the remaining
 agents. The 30-minute TTL is a hard backstop for hung runs, not the normal
 completion mechanism.
 
+The orchestrator service reads the trusted `TypeOfJob` EC2 tag into
+`TYPE_OF_JOB` and starts `orchestrator_entrypoint.py`. Data-mining jobs continue
+to use `orchestrator_runner.py`, including its subagent MCP server. Software
+jobs use `orchestrator_software_runner.py`; that runner neither imports the
+data-mining runner nor configures the subagent MCP server. It asks the GitHub
+broker for the assigned repository, clones it under the software job directory,
+and starts Codex with the cloned repository root as its working directory.
+
 Before a successful orchestrator shuts down, it uploads three durable outputs
 under `jobs/<job_id>/result/`: `plan.md`, the narrative `final.md`, and a
 structured `final_result.json`. The orchestrator chooses the JSON structure that
@@ -97,7 +118,8 @@ each run and terminates it when the run is complete.
 admin/                  Next.js admin console
 infra/                  Terraform configuration
 src/subagent_manager/   Lambda implementation
-tests/                  Python unit tests
+src/github_token_broker/ Repository-scoped GitHub credential broker
+tests/                  Python and Node.js unit tests
 ```
 
 ## Admin Console
@@ -186,10 +208,82 @@ Create a local environment and run the unit tests:
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m unittest discover -s tests -v
+node --test tests/github_token_broker.test.mjs
 ```
 
 The tests cover the configured agent boundary, over-capacity rejection, idempotent
 request IDs, launch failure handling, and termination reconciliation.
+
+## GitHub writer credential boundary
+
+The admin/provisioner GitHub App and the orchestrator/writer GitHub App are
+separate identities. The writer App should have only repository
+`Contents: Read and write` (GitHub also supplies metadata read access). Install
+it on the organization repositories it may serve. The infrastructure then
+reduces each issued installation token to one trusted repository ID, so an
+orchestrator never receives the App PEM and cannot request another repository
+in the broker payload.
+
+Terraform defines the broker Lambda, its dedicated IAM role, a dedicated KMS
+key, and an admin-only DynamoDB repository-assignment table. The only runtime
+identity allowed to call `ssm:GetParameter` and `kms:Decrypt` for the writer key
+is the broker role. The orchestrator role can invoke the broker but has no
+access to the assignment table, PEM parameter, or KMS key. Subagents have none
+of those permissions.
+
+Copy the non-secret example variables and set the writer App's Client ID. An
+App ID, client secret, installation ID, or PEM contents do not belong in this
+file:
+
+```bash
+cd infra
+cp terraform.tfvars.example terraform.tfvars
+```
+
+After reviewing and applying Terraform, create the SecureString out of band.
+Terraform deliberately does not manage an `aws_ssm_parameter` value because a
+managed value would be copied into Terraform state. Run this with the same
+deployer/admin AWS profile used for Terraform, not the restricted admin-server
+application credentials:
+
+```bash
+WRITER_PEM_PATH="/absolute/path/to/cody-software-builder-writer.private-key.pem"
+
+aws ssm put-parameter \
+  --region us-east-1 \
+  --name "$(terraform output -raw github_writer_private_key_ssm_parameter_name)" \
+  --description "Private key for the GitHub software-builder writer App" \
+  --type SecureString \
+  --key-id "$(terraform output -raw github_writer_private_key_kms_key_arn)" \
+  --value "file://$WRITER_PEM_PATH"
+```
+
+Use `--overwrite` only when intentionally rotating an existing key. You can
+verify the parameter's metadata without printing its decrypted value:
+
+```bash
+aws ssm describe-parameters \
+  --region us-east-1 \
+  --parameter-filters \
+    "Key=Name,Option=Equals,Values=$(terraform output -raw github_writer_private_key_ssm_parameter_name)"
+```
+
+The future software-builder submit API must atomically create the job and an
+immutable item in the `github_repository_assignments_table_name` output with
+`job_id`, GitHub's numeric `github_repository_id`, and
+`github_repository_full_name`. The broker accepts only `job_id` and
+`orchestrator_instance_id`; it obtains repository scope from that trusted
+record, verifies the active job and EC2 assignment, and asks GitHub for an
+installation token limited to that repository and `contents:write`. GitHub
+installation tokens expire after one hour.
+
+The software-builder runner uses the first token only to clone the assigned
+repository. It then installs a repository-local Git credential helper that asks
+the broker for a fresh token when Git needs one, allowing a long-running job to
+push after the first token expires without storing the token in the remote URL,
+repository, environment file, or Codex configuration. Before the runner marks a
+job complete, it requires a clean working tree and verifies that the current
+commit exists on the matching branch at `origin`.
 
 ## Terraform
 
@@ -235,7 +329,7 @@ are separate so one can be rebuilt without unnecessarily rebuilding the other.
 The current versions are:
 
 ```hcl
-orchestrator_image_version = "1.1.2"
+orchestrator_image_version = "1.1.3"
 agent_image_version        = "1.1.1"
 ```
 

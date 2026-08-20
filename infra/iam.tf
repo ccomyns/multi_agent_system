@@ -66,6 +66,70 @@ resource "aws_iam_role_policy" "lambda" {
   })
 }
 
+// This role is the only runtime identity allowed to decrypt the GitHub writer
+// App private key. Orchestrators receive repository-scoped installation tokens
+// from the broker and never receive this role or its SSM/KMS permissions.
+resource "aws_iam_role" "github_token_broker" {
+  name = "${var.project_name}-github-token-broker"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "github_token_broker_logs" {
+  role       = aws_iam_role.github_token_broker.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy" "github_token_broker" {
+  name = "read-assignment-and-mint-token"
+  role = aws_iam_role.github_token_broker.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "ReadActiveJob"
+        Effect   = "Allow"
+        Action   = "dynamodb:GetItem"
+        Resource = aws_dynamodb_table.jobs.arn
+      },
+      {
+        Sid      = "ReadTrustedRepositoryAssignment"
+        Effect   = "Allow"
+        Action   = "dynamodb:GetItem"
+        Resource = aws_dynamodb_table.github_repository_assignments.arn
+      },
+      {
+        Sid      = "ReadWriterPrivateKey"
+        Effect   = "Allow"
+        Action   = "ssm:GetParameter"
+        Resource = local.github_writer_private_key_ssm_parameter_arn
+      },
+      {
+        Sid      = "DecryptWriterPrivateKey"
+        Effect   = "Allow"
+        Action   = "kms:Decrypt"
+        Resource = aws_kms_key.github_writer_private_key.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService"                      = "ssm.${var.aws_region}.amazonaws.com"
+            "kms:EncryptionContext:PARAMETER_ARN" = local.github_writer_private_key_ssm_parameter_arn
+          }
+        }
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role" "subagent" {
   name = "${var.project_name}-subagent"
 
@@ -178,9 +242,13 @@ resource "aws_iam_role_policy" "orchestrator" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = "lambda:InvokeFunction"
-        Resource = aws_lambda_function.subagent_manager.arn
+        Sid    = "InvokeRuntimeBrokers"
+        Effect = "Allow"
+        Action = "lambda:InvokeFunction"
+        Resource = [
+          aws_lambda_function.subagent_manager.arn,
+          aws_lambda_function.github_token_broker.arn
+        ]
       },
       {
         Sid    = "ReadAndFinishOwnJob"
@@ -314,6 +382,17 @@ resource "aws_iam_policy" "admin_server" {
           "dynamodb:UpdateItem"
         ]
         Resource = aws_dynamodb_table.jobs.arn
+      },
+      {
+        Sid    = "RepositoryAssignments"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:DeleteItem",
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:TransactWriteItems"
+        ]
+        Resource = aws_dynamodb_table.github_repository_assignments.arn
       },
       {
         Sid    = "ReadSubagentState"

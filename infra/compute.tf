@@ -14,6 +14,8 @@ locals {
       /var/log/multi-agent/orchestrator-bootstrap.log
     install -o multi-agent -g multi-agent -m 0600 /dev/null \
       /var/log/multi-agent/orchestrator-codex.log
+    install -o multi-agent -g multi-agent -m 0600 /dev/null \
+      /var/log/multi-agent/orchestrator-software-codex.log
     exec > >(tee -a /var/log/multi-agent/orchestrator-bootstrap.log \
       | logger -t multi-agent-orchestrator-bootstrap -s 2>/dev/console) 2>&1
 
@@ -28,6 +30,10 @@ locals {
       -H "X-aws-ec2-metadata-token: $token" \
       http://169.254.169.254/latest/meta-data/tags/instance/JobId)"
 
+    type_of_job="$(curl -fsS \
+      -H "X-aws-ec2-metadata-token: $token" \
+      http://169.254.169.254/latest/meta-data/tags/instance/TypeOfJob)"
+
     cat > /etc/multi-agent/orchestrator.env <<ENV
     AWS_DEFAULT_REGION=${var.aws_region}
     AWS_REGION=${var.aws_region}
@@ -35,7 +41,9 @@ locals {
     AGENT_WORKSPACE_BUCKET_NAME=${aws_s3_bucket.agent_workspace.id}
     GLOBAL_MEMORY_BUCKET_NAME=${aws_s3_bucket.global_memory.id}
     JOBS_TABLE_NAME=${aws_dynamodb_table.jobs.name}
+    GITHUB_TOKEN_BROKER_FUNCTION_NAME=${aws_lambda_function.github_token_broker.function_name}
     JOB_ID=$job_id
+    TYPE_OF_JOB=$type_of_job
     ORCHESTRATOR_INSTANCE_ID=$instance_id
     CODEX_AUTH_SSM_PARAMETER_NAME=${local.codex_auth_ssm_parameter_name}
     ORCHESTRATOR_MODEL=${var.orchestrator_model}
@@ -44,6 +52,7 @@ locals {
     ORCHESTRATOR_DOCUMENTATION_DIR=/opt/multi-agent/runtime/docs
     BOOTSTRAP_LOG_PATH=/var/log/multi-agent/orchestrator-bootstrap.log
     CODEX_LOG_PATH=/var/log/multi-agent/orchestrator-codex.log
+    SOFTWARE_BUILDER_CODEX_LOG_PATH=/var/log/multi-agent/orchestrator-software-codex.log
     ENV
     chown root:multi-agent /etc/multi-agent/orchestrator.env
     chmod 0640 /etc/multi-agent/orchestrator.env

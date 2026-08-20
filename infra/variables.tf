@@ -48,6 +48,49 @@ variable "codex_auth_ssm_parameter_name" {
   }
 }
 
+variable "github_organization" {
+  description = "GitHub organization containing repositories assigned to software-builder jobs."
+  type        = string
+
+  validation {
+    condition = (
+      length(var.github_organization) >= 1 &&
+      length(var.github_organization) <= 39 &&
+      can(regex("^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$", var.github_organization))
+    )
+    error_message = "github_organization must be a valid GitHub organization login."
+  }
+}
+
+variable "github_writer_app_client_id" {
+  description = "Non-secret Client ID of the GitHub App that writes software-builder repositories."
+  type        = string
+
+  validation {
+    condition = (
+      length(var.github_writer_app_client_id) >= 10 &&
+      length(var.github_writer_app_client_id) <= 100 &&
+      can(regex("^[A-Za-z0-9_-]+$", var.github_writer_app_client_id))
+    )
+    error_message = "github_writer_app_client_id must be the Client ID shown on the GitHub App settings page."
+  }
+}
+
+variable "github_writer_private_key_ssm_parameter_name" {
+  description = "Name of the out-of-band SSM SecureString containing the GitHub writer App PEM. Null uses /<project_name>/github/writer-private-key."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.github_writer_private_key_ssm_parameter_name == null ||
+      can(regex("^/[A-Za-z0-9_./-]+$", var.github_writer_private_key_ssm_parameter_name))
+    )
+    error_message = "github_writer_private_key_ssm_parameter_name must be an absolute SSM parameter name beginning with /."
+  }
+}
+
 variable "orchestrator_model" {
   description = "Codex model used by the real orchestrator runner."
   type        = string
@@ -107,7 +150,7 @@ variable "agent_image_version" {
 variable "orchestrator_image_version" {
   description = "Semantic version assigned to the orchestrator runtime component and image recipe. Increment this to rebuild only the orchestrator AMI."
   type        = string
-  default     = "1.1.2"
+  default     = "1.1.3"
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.orchestrator_image_version))

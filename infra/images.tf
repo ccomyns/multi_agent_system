@@ -115,7 +115,7 @@ resource "aws_imagebuilder_component" "agent_core" {
 
 resource "aws_imagebuilder_component" "orchestrator_runtime" {
   name        = "${var.project_name}-orchestrator-runtime"
-  description = "Install the real job runner and its disabled-by-default systemd service."
+  description = "Install the isolated data-mining and software-builder runners and their disabled-by-default systemd service."
   platform    = "Linux"
   version     = var.orchestrator_image_version
 
@@ -144,6 +144,10 @@ resource "aws_imagebuilder_component" "orchestrator_runtime" {
               commands = [
                 <<-EOT
                   set -euo pipefail
+                  export DEBIAN_FRONTEND=noninteractive
+
+                  apt-get update
+                  apt-get install -y git
 
                   if ! id multi-agent >/dev/null 2>&1; then
                     useradd --system --create-home --home-dir /var/lib/multi-agent \
@@ -169,13 +173,18 @@ resource "aws_imagebuilder_component" "orchestrator_runtime" {
                   chown -R root:root /opt/multi-agent/runtime
                   find /opt/multi-agent/runtime -type d -exec chmod 0755 {} +
                   find /opt/multi-agent/runtime -type f -exec chmod 0644 {} +
+                  chmod 0755 /opt/multi-agent/runtime/bin/orchestrator_entrypoint.py
                   chmod 0755 /opt/multi-agent/runtime/bin/orchestrator_runner.py
+                  chmod 0755 /opt/multi-agent/runtime/bin/orchestrator_software_runner.py
+                  chmod 0755 /opt/multi-agent/runtime/bin/github_credential_helper.py
                   chmod 0755 /opt/multi-agent/runtime/bin/spawn-agent-mcp
                   rm -f /tmp/orchestrator-runtime.zip
+                  apt-get clean
+                  rm -rf /var/lib/apt/lists/*
 
                   cat > /etc/systemd/system/multi-agent-orchestrator.service <<'UNIT'
                   [Unit]
-                  Description=Multi-agent research orchestrator
+                  Description=Job-type-isolated Codex orchestrator
                   After=network-online.target cloud-final.service
                   Wants=network-online.target
                   ConditionPathExists=/etc/multi-agent/orchestrator.env
@@ -185,7 +194,7 @@ resource "aws_imagebuilder_component" "orchestrator_runtime" {
                   User=multi-agent
                   Group=multi-agent
                   EnvironmentFile=/etc/multi-agent/orchestrator.env
-                  ExecStart=/opt/multi-agent/venv/bin/python /opt/multi-agent/runtime/bin/orchestrator_runner.py
+                  ExecStart=/opt/multi-agent/venv/bin/python /opt/multi-agent/runtime/bin/orchestrator_entrypoint.py
                   ExecStopPost=+/sbin/shutdown -h now
                   TimeoutStartSec=infinity
                   StandardOutput=journal
@@ -211,12 +220,20 @@ resource "aws_imagebuilder_component" "orchestrator_runtime" {
             inputs = {
               commands = [
                 "set -euo pipefail",
+                "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/orchestrator_entrypoint.py",
                 "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/orchestrator_runner.py",
+                "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/orchestrator_software_runner.py",
+                "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/software_github_credentials.py",
+                "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/github_credential_helper.py",
                 "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/agent_telemetry.py",
                 "/opt/multi-agent/venv/bin/python -m py_compile /opt/multi-agent/runtime/bin/spawn_agent_mcp.py",
                 "/opt/multi-agent/venv/bin/python -c 'from mcp.server.fastmcp import FastMCP'",
                 "/opt/multi-agent/venv/bin/python -c 'import openpyxl, xlrd'",
+                "git --version",
                 "cd /var/lib/multi-agent && runuser -u multi-agent -- codex sandbox -- /bin/true",
+                "test -x /opt/multi-agent/runtime/bin/orchestrator_entrypoint.py",
+                "test -x /opt/multi-agent/runtime/bin/orchestrator_software_runner.py",
+                "test -x /opt/multi-agent/runtime/bin/github_credential_helper.py",
                 "test -x /opt/multi-agent/runtime/bin/spawn-agent-mcp",
                 "systemd-analyze verify /etc/systemd/system/multi-agent-orchestrator.service",
                 "test ! -e /etc/systemd/system/multi-user.target.wants/multi-agent-orchestrator.service",

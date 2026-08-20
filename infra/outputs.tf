@@ -28,6 +28,11 @@ output "jobs_table_name" {
   value       = aws_dynamodb_table.jobs.name
 }
 
+output "github_repository_assignments_table_name" {
+  description = "DynamoDB table containing trusted job-to-GitHub-repository assignments."
+  value       = aws_dynamodb_table.github_repository_assignments.name
+}
+
 output "job_results_prefix" {
   description = "S3 location under which each orchestrator writes its final output."
   value       = "s3://${aws_s3_bucket.agent_workspace.id}/jobs/"
@@ -41,6 +46,26 @@ output "admin_server_iam_user_name" {
 output "codex_auth_ssm_parameter_name" {
   description = "Out-of-band SSM SecureString from which real orchestrators load auth.json."
   value       = local.codex_auth_ssm_parameter_name
+}
+
+output "github_token_broker_function_name" {
+  description = "Lambda function an orchestrator invokes to obtain a repository-scoped GitHub installation token."
+  value       = aws_lambda_function.github_token_broker.function_name
+}
+
+output "github_writer_private_key_ssm_parameter_name" {
+  description = "Out-of-band SSM SecureString name for the GitHub writer App PEM."
+  value       = local.github_writer_private_key_ssm_parameter_name
+}
+
+output "github_writer_private_key_kms_key_arn" {
+  description = "KMS key that must encrypt the GitHub writer private-key SecureString."
+  value       = aws_kms_key.github_writer_private_key.arn
+}
+
+output "github_writer_private_key_kms_alias" {
+  description = "KMS alias for the GitHub writer private-key SecureString."
+  value       = aws_kms_alias.github_writer_private_key.name
 }
 
 output "orchestrator_ami_id" {

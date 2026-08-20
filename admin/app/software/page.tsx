@@ -5,9 +5,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Sidebar } from "@/components/sidebar";
 import {
+  GITHUB_REPOSITORY_DESCRIPTION_MAX_LENGTH,
+  GITHUB_REPOSITORY_NAME_MAX_LENGTH,
+  isCreateGitHubRepositoryResponse,
+  isGitHubRepositoriesResponse,
+  repositoryNameError,
+  type GitHubRepositorySummary,
+} from "@/lib/github-repository-types";
+import {
   isProjectsResponse,
   type ProjectSummary,
 } from "@/lib/project-uploads";
+
+interface PendingRepository {
+  name: string;
+  description: string;
+}
 
 function responseError(value: unknown, fallback: string) {
   return (
@@ -22,16 +35,29 @@ function responseError(value: unknown, fallback: string) {
 
 export default function SoftwareBuilderPage() {
   const [contextOpen, setContextOpen] = useState(false);
+  const [repositoryPickerOpen, setRepositoryPickerOpen] = useState(false);
   const [createRepositoryOpen, setCreateRepositoryOpen] = useState(false);
   const [repositoryName, setRepositoryName] = useState("");
   const [repositoryDescription, setRepositoryDescription] = useState("");
   const [repositoryFormError, setRepositoryFormError] = useState<string | null>(
     null,
   );
+  const [pendingRepository, setPendingRepository] =
+    useState<PendingRepository | null>(null);
+  const [repositories, setRepositories] = useState<GitHubRepositorySummary[]>([]);
+  const [organization, setOrganization] = useState("");
+  const [repositoriesLoading, setRepositoriesLoading] = useState(false);
+  const [repositoriesError, setRepositoriesError] = useState<string | null>(null);
+  const [selectedRepository, setSelectedRepository] =
+    useState<GitHubRepositorySummary | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitNotice, setSubmitNotice] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [selectedProject, setSelectedProject] = useState("");
+  const repositoryPickerRef = useRef<HTMLDivElement>(null);
   const contextPickerRef = useRef<HTMLDivElement>(null);
   const createRepositoryButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -39,6 +65,45 @@ export default function SoftwareBuilderPage() {
     setCreateRepositoryOpen(false);
     setRepositoryFormError(null);
     window.requestAnimationFrame(() => createRepositoryButtonRef.current?.focus());
+  }, []);
+
+  const loadRepositories = useCallback(async () => {
+    setRepositoriesLoading(true);
+    setRepositoriesError(null);
+    try {
+      const response = await fetch("/api/github/repositories", {
+        cache: "no-store",
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          responseError(
+            payload,
+            `Repository request failed (${response.status}).`,
+          ),
+        );
+      }
+      if (!isGitHubRepositoriesResponse(payload)) {
+        throw new Error("The admin server returned an unexpected repository list.");
+      }
+      setOrganization(payload.organization);
+      setRepositories(payload.repositories);
+      setSelectedRepository((current) => {
+        if (!current) return null;
+        return (
+          payload.repositories.find((repository) => repository.id === current.id) ??
+          null
+        );
+      });
+    } catch (caught) {
+      setRepositoriesError(
+        caught instanceof Error
+          ? caught.message
+          : "Repositories could not be loaded.",
+      );
+    } finally {
+      setRepositoriesLoading(false);
+    }
   }, []);
 
   const loadProjects = useCallback(async () => {
@@ -67,6 +132,30 @@ export default function SoftwareBuilderPage() {
       setProjectsLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!repositoryPickerOpen) return;
+
+    function closeRepositoryMenu(event: MouseEvent) {
+      if (
+        event.target instanceof Node &&
+        !repositoryPickerRef.current?.contains(event.target)
+      ) {
+        setRepositoryPickerOpen(false);
+      }
+    }
+
+    function closeRepositoryMenuOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setRepositoryPickerOpen(false);
+    }
+
+    document.addEventListener("mousedown", closeRepositoryMenu);
+    window.addEventListener("keydown", closeRepositoryMenuOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeRepositoryMenu);
+      window.removeEventListener("keydown", closeRepositoryMenuOnEscape);
+    };
+  }, [repositoryPickerOpen]);
 
   useEffect(() => {
     if (!contextOpen) return;
@@ -109,7 +198,18 @@ export default function SoftwareBuilderPage() {
     };
   }, [closeCreateRepository, createRepositoryOpen]);
 
+  function toggleRepositoryMenu() {
+    setContextOpen(false);
+    if (repositoryPickerOpen) {
+      setRepositoryPickerOpen(false);
+      return;
+    }
+    setRepositoryPickerOpen(true);
+    void loadRepositories();
+  }
+
   function toggleContextMenu() {
+    setRepositoryPickerOpen(false);
     if (contextOpen) {
       setContextOpen(false);
       return;
@@ -119,30 +219,85 @@ export default function SoftwareBuilderPage() {
   }
 
   function openCreateRepository() {
-    setRepositoryName("");
-    setRepositoryDescription("");
+    setRepositoryPickerOpen(false);
+    setRepositoryName(pendingRepository?.name ?? "");
+    setRepositoryDescription(pendingRepository?.description ?? "");
     setRepositoryFormError(null);
     setCreateRepositoryOpen(true);
   }
 
-  function submitCreateRepository(event: React.FormEvent<HTMLFormElement>) {
+  function saveRepositoryDetails(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const normalizedName = repositoryName.trim();
-    if (!normalizedName) {
-      setRepositoryFormError("Enter a repository name.");
-      return;
-    }
-    if (!/^[A-Za-z0-9._-]+$/.test(normalizedName)) {
-      setRepositoryFormError(
-        "Use only letters, numbers, periods, hyphens, and underscores.",
-      );
+    const invalidName = repositoryNameError(normalizedName);
+    if (invalidName) {
+      setRepositoryFormError(invalidName);
       return;
     }
 
-    setRepositoryFormError(
-      "GitHub is not connected yet. Add the server-side GitHub App endpoint before creating repositories.",
-    );
+    setPendingRepository({
+      name: normalizedName,
+      description: repositoryDescription.trim(),
+    });
+    setSelectedRepository(null);
+    setSubmitError(null);
+    setSubmitNotice(null);
+    closeCreateRepository();
+  }
+
+  async function submitSoftwareBuilder() {
+    setSubmitError(null);
+    setSubmitNotice(null);
+
+    if (!pendingRepository) {
+      if (selectedRepository) {
+        setSubmitNotice(
+          `${selectedRepository.fullName} is selected. No new repository was created.`,
+        );
+      }
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const response = await fetch("/api/github/repositories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(pendingRepository),
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          responseError(
+            payload,
+            `Repository creation failed (${response.status}).`,
+          ),
+        );
+      }
+      if (!isCreateGitHubRepositoryResponse(payload)) {
+        throw new Error("The admin server returned an unexpected repository.");
+      }
+
+      const createdRepository = payload.repository;
+      setOrganization(payload.organization);
+      setRepositories((current) =>
+        [...current.filter((repository) => repository.id !== createdRepository.id), createdRepository].sort(
+          (left, right) => left.name.localeCompare(right.name),
+        ),
+      );
+      setSelectedRepository(createdRepository);
+      setPendingRepository(null);
+      setSubmitNotice(`${createdRepository.fullName} was created and selected.`);
+    } catch (caught) {
+      setSubmitError(
+        caught instanceof Error
+          ? caught.message
+          : "The repository could not be created.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -172,22 +327,146 @@ export default function SoftwareBuilderPage() {
                   <div className="software-repo-controls">
                     <button
                       ref={createRepositoryButtonRef}
+                      className="software-create-repository-trigger"
+                      data-testid="create-repository-trigger"
                       type="button"
                       onClick={openCreateRepository}
                     >
-                      Create a new project
+                      <span>
+                        <strong>Create a new project</strong>
+                        {pendingRepository ? (
+                          <small>{pendingRepository.name}</small>
+                        ) : null}
+                      </span>
+                      <GitBranch size={17} strokeWidth={1.8} aria-hidden="true" />
                     </button>
-                    <label className="sr-only" htmlFor="software-project">
-                      Pick an existing project
-                    </label>
-                    <select id="software-project" defaultValue="">
-                      <option value="" disabled>
-                        Pick an existing project
-                      </option>
-                      <option value="example-project-one">Example Project One</option>
-                      <option value="example-project-two">Example Project Two</option>
-                    </select>
+
+                    <div
+                      className="software-repository-picker"
+                      ref={repositoryPickerRef}
+                    >
+                      <button
+                        className={
+                          repositoryPickerOpen
+                            ? "software-repository-picker-panel is-open"
+                            : "software-repository-picker-panel"
+                        }
+                        data-testid="repository-picker-trigger"
+                        type="button"
+                        aria-expanded={repositoryPickerOpen}
+                        aria-controls="software-repository-picker-menu"
+                        onClick={toggleRepositoryMenu}
+                      >
+                        <span>
+                          <strong>Pick an Existing Project</strong>
+                          {selectedRepository ? (
+                            <small>{selectedRepository.fullName}</small>
+                          ) : organization ? (
+                            <small>{organization}</small>
+                          ) : null}
+                        </span>
+                        <ChevronDown
+                          size={17}
+                          strokeWidth={1.8}
+                          aria-hidden="true"
+                        />
+                      </button>
+
+                      {repositoryPickerOpen ? (
+                        <div
+                          className="software-repository-picker-menu"
+                          data-testid="repository-picker-menu"
+                          id="software-repository-picker-menu"
+                          role="listbox"
+                          aria-label="GitHub organization repositories"
+                        >
+                          {repositoriesLoading ? (
+                            <div className="software-context-state" role="status">
+                              <RefreshCw
+                                className="software-context-spin"
+                                size={15}
+                                aria-hidden="true"
+                              />
+                              Loading repositories…
+                            </div>
+                          ) : repositoriesError ? (
+                            <div
+                              className="software-context-state is-error"
+                              role="alert"
+                            >
+                              <span>{repositoriesError}</span>
+                              <button
+                                type="button"
+                                onClick={() => void loadRepositories()}
+                              >
+                                Try again
+                              </button>
+                            </div>
+                          ) : repositories.length === 0 ? (
+                            <div className="software-context-state">
+                              No repositories found in this organization.
+                            </div>
+                          ) : (
+                            <div className="software-repository-options">
+                              {repositories.map((repository) => (
+                                <button
+                                  className={
+                                    selectedRepository?.id === repository.id
+                                      ? "is-selected"
+                                      : undefined
+                                  }
+                                  key={repository.id}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={
+                                    selectedRepository?.id === repository.id
+                                  }
+                                  onClick={() => {
+                                    setSelectedRepository(repository);
+                                    setPendingRepository(null);
+                                    setSubmitError(null);
+                                    setSubmitNotice(null);
+                                    setRepositoryPickerOpen(false);
+                                  }}
+                                >
+                                  <span>
+                                    <strong>{repository.name}</strong>
+                                    <small>
+                                      {repository.description || repository.fullName}
+                                    </small>
+                                  </span>
+                                  <em>{repository.visibility}</em>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
+
+                  {pendingRepository ? (
+                    <div className="software-repository-pending" role="status">
+                      <GitBranch size={16} strokeWidth={1.8} aria-hidden="true" />
+                      <span>
+                        <strong>{pendingRepository.name}</strong>
+                        Will be created only when you click Submit.
+                      </span>
+                      <button type="button" onClick={openCreateRepository}>
+                        Edit
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {submitError ? (
+                    <div className="software-repository-submit-state is-error" role="alert">
+                      {submitError}
+                    </div>
+                  ) : submitNotice ? (
+                    <div className="software-repository-submit-state" role="status">
+                      {submitNotice}
+                    </div>
+                  ) : null}
                 </div>
               </section>
 
@@ -242,7 +521,9 @@ export default function SoftwareBuilderPage() {
                         {projects.map((project) => (
                           <button
                             className={
-                              selectedProject === project.name ? "is-selected" : undefined
+                              selectedProject === project.name
+                                ? "is-selected"
+                                : undefined
                             }
                             key={project.name}
                             type="button"
@@ -267,8 +548,16 @@ export default function SoftwareBuilderPage() {
               <button className="software-builder-footer-button" type="button">
                 PAST JOBS
               </button>
-              <button className="software-builder-submit" type="button">
-                SUBMIT
+              <button
+                className="software-builder-submit"
+                data-testid="software-builder-submit"
+                type="button"
+                disabled={
+                  submitting || (!pendingRepository && !selectedRepository)
+                }
+                onClick={() => void submitSoftwareBuilder()}
+              >
+                {submitting ? "CREATING REPO…" : "SUBMIT"}
               </button>
             </footer>
           </div>
@@ -282,6 +571,7 @@ export default function SoftwareBuilderPage() {
         >
           <section
             className="software-repository-modal"
+            data-testid="create-repository-dialog"
             role="dialog"
             aria-modal="true"
             aria-labelledby="software-repository-modal-title"
@@ -305,7 +595,7 @@ export default function SoftwareBuilderPage() {
               </button>
             </header>
 
-            <form onSubmit={submitCreateRepository}>
+            <form onSubmit={saveRepositoryDetails}>
               <div className="software-repository-form-fields">
                 <label htmlFor="software-repository-name">
                   <span>
@@ -317,7 +607,7 @@ export default function SoftwareBuilderPage() {
                     name="repositoryName"
                     type="text"
                     required
-                    maxLength={100}
+                    maxLength={GITHUB_REPOSITORY_NAME_MAX_LENGTH}
                     autoComplete="off"
                     spellCheck={false}
                     value={repositoryName}
@@ -340,7 +630,7 @@ export default function SoftwareBuilderPage() {
                     id="software-repository-description"
                     name="repositoryDescription"
                     rows={4}
-                    maxLength={350}
+                    maxLength={GITHUB_REPOSITORY_DESCRIPTION_MAX_LENGTH}
                     value={repositoryDescription}
                     placeholder="What does this repository do?"
                     onChange={(event) => {
@@ -348,16 +638,19 @@ export default function SoftwareBuilderPage() {
                       setRepositoryFormError(null);
                     }}
                   />
-                  <small>{repositoryDescription.length}/350 characters</small>
+                  <small>
+                    {repositoryDescription.length}/
+                    {GITHUB_REPOSITORY_DESCRIPTION_MAX_LENGTH} characters
+                  </small>
                 </label>
               </div>
 
               <div className="software-repository-privacy-note">
                 <LockKeyhole size={15} strokeWidth={1.8} aria-hidden="true" />
                 <span>
-                  <strong>Private by default</strong>
-                  Repository credentials will stay on the server, never in the
-                  browser.
+                  <strong>Created on Submit</strong>
+                  These details are staged here first. The private repository will
+                  only be created when you click Submit.
                 </span>
               </div>
 
@@ -381,7 +674,7 @@ export default function SoftwareBuilderPage() {
                   disabled={!repositoryName.trim()}
                 >
                   <GitBranch size={15} strokeWidth={1.9} aria-hidden="true" />
-                  Create repository
+                  Save details
                 </button>
               </footer>
             </form>

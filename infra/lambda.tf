@@ -47,6 +47,47 @@ resource "aws_lambda_function" "subagent_manager" {
   ]
 }
 
+data "archive_file" "github_token_broker" {
+  type        = "zip"
+  source_dir  = "${path.module}/../src/github_token_broker"
+  output_path = "${path.module}/github-token-broker.zip"
+}
+
+resource "aws_cloudwatch_log_group" "github_token_broker" {
+  name              = "/aws/lambda/${var.project_name}-github-token-broker"
+  retention_in_days = 14
+}
+
+resource "aws_lambda_function" "github_token_broker" {
+  function_name = "${var.project_name}-github-token-broker"
+  description   = "Issues short-lived GitHub App tokens scoped to a software job's assigned repository."
+  role          = aws_iam_role.github_token_broker.arn
+  handler       = "handler.handler"
+  runtime       = "nodejs22.x"
+  architectures = ["arm64"]
+  timeout       = 15
+  memory_size   = 256
+
+  filename         = data.archive_file.github_token_broker.output_path
+  source_code_hash = data.archive_file.github_token_broker.output_base64sha256
+
+  environment {
+    variables = {
+      GITHUB_ORGANIZATION                          = var.github_organization
+      GITHUB_REPOSITORY_ASSIGNMENTS_TABLE_NAME     = aws_dynamodb_table.github_repository_assignments.name
+      GITHUB_WRITER_APP_CLIENT_ID                  = var.github_writer_app_client_id
+      GITHUB_WRITER_PRIVATE_KEY_SSM_PARAMETER_NAME = local.github_writer_private_key_ssm_parameter_name
+      JOBS_TABLE_NAME                              = aws_dynamodb_table.jobs.name
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.github_token_broker,
+    aws_iam_role_policy.github_token_broker,
+    aws_iam_role_policy_attachment.github_token_broker_logs,
+  ]
+}
+
 resource "aws_cloudwatch_event_rule" "subagent_terminated" {
   name        = "${var.project_name}-subagent-terminated"
   description = "Reconcile EC2 instance termination with active subagent state."
