@@ -238,6 +238,9 @@ def spawn_agent(task: str) -> dict[str, Any]:
                 "job_id": job_id,
                 "task_s3_uri": input_uri,
                 "model": model,
+                # Persisted by the manager as the compact panel projection. The
+                # complete task specification remains the subagent's S3 handoff.
+                "task": normalized_task,
             }
         ).encode("utf-8"),
     )

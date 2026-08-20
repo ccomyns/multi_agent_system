@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import json
 import os
 import subprocess
 import unittest
@@ -39,6 +41,7 @@ class SpawnTests(unittest.TestCase):
             "task_s3_uri": f"s3://agent-workspace-bucket/{task_s3_key}",
             "task_s3_key": task_s3_key,
             "model": "gpt-5.6-luna",
+            "task": "Investigate revenue quality",
         }
 
     @classmethod
@@ -51,6 +54,7 @@ class SpawnTests(unittest.TestCase):
             "job_id": handoff["job_id"],
             "task_s3_uri": handoff["task_s3_uri"],
             "model": handoff["model"],
+            "task": handoff["task"],
         }
 
     def test_first_eight_launches_succeed_and_ninth_is_rejected(self) -> None:
@@ -134,6 +138,7 @@ class SpawnTests(unittest.TestCase):
         self.assertEqual(put_item["ami_id"], {"S": "ami-browser-tools"})
         self.assertEqual(put_item["instance_type"], {"S": "t3.large"})
         self.assertEqual(put_item["ttl_seconds"], {"N": "1800"})
+        self.assertEqual(put_item["task"], {"S": "Investigate revenue quality"})
 
     def test_real_task_launch_passes_only_trusted_s3_handoff_to_runner(self) -> None:
         ec2 = Mock()
@@ -149,6 +154,7 @@ class SpawnTests(unittest.TestCase):
                 "agent-0123456789abcdef01234567/input.json"
             ),
             "model": "gpt-5.6-luna",
+            "task": "Investigate revenue quality",
         }
         with (
             patch.dict(
@@ -211,6 +217,7 @@ class SpawnTests(unittest.TestCase):
                 "job_id": "job_abc1_1234abcd",
                 "task_s3_uri": "s3://another-bucket/arbitrary-input.json",
                 "model": "gpt-5.6-luna",
+                "task": "Investigate revenue quality",
             },
             None,
         )
@@ -299,6 +306,7 @@ class TerminationTests(unittest.TestCase):
             os.environ,
             {
                 "AUDIT_BUCKET_NAME": "audit-bucket",
+                "AGENT_WORKSPACE_BUCKET_NAME": "agent-workspace-bucket",
                 "STATE_TABLE_NAME": "state-table",
             },
             clear=False,
@@ -335,6 +343,7 @@ class TerminationTests(unittest.TestCase):
                 "_client",
                 side_effect=lambda name: dynamodb if name == "dynamodb" else Mock(),
             ),
+            patch.object(handler, "_terminal_projection", return_value={}),
             patch.object(handler, "_audit") as audit,
         ):
             result = handler.lambda_handler(event, None)
@@ -342,6 +351,39 @@ class TerminationTests(unittest.TestCase):
         self.assertTrue(result["reconciled"])
         dynamodb.transact_write_items.assert_called_once()
         audit.assert_called_once()
+
+    def test_completed_terminal_projection_reads_compact_metrics(self) -> None:
+        s3 = Mock()
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            if key.endswith("/status/completed.json"):
+                value = {"state": "completed"}
+            elif key.endswith("/telemetry/latest.json"):
+                value = {
+                    "codex_started_at": "2026-01-01T00:00:00Z",
+                    "codex_finished_at": "2026-01-01T00:02:03Z",
+                    "usage": {"total_tokens": 4567},
+                }
+            else:
+                self.fail(f"unexpected S3 key: {key}")
+            raw = json.dumps(value).encode("utf-8")
+            return {"Body": io.BytesIO(raw), "ContentLength": len(raw)}
+
+        s3.get_object.side_effect = get_object
+        with patch.object(handler, "_client", return_value=s3):
+            projection = handler._terminal_projection(
+                {"job_id": "job_abc1_1234abcd", "agent_id": "agent-1"}
+            )
+
+        self.assertEqual(
+            projection,
+            {
+                "result_status": "completed",
+                "runtime_seconds": 123,
+                "total_tokens": 4567,
+            },
+        )
 
 
 if __name__ == "__main__":

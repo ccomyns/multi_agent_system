@@ -107,6 +107,7 @@ class SpawnAgentMcpTests(unittest.TestCase):
         invoked = json.loads(lambda_client.invoke.call_args.kwargs["Payload"])
         self.assertEqual(invoked["request_id"], expected_id)
         self.assertEqual(invoked["model"], "gpt-5.6-luna")
+        self.assertEqual(invoked["task"], "Investigate revenue quality.")
         self.assertEqual(
             invoked["orchestrator_id"], self.environment["ORCHESTRATOR_INSTANCE_ID"]
         )

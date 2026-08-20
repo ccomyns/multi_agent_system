@@ -17,6 +17,8 @@ from botocore.exceptions import ClientError
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _JOB_ID_PATTERN = re.compile(r"^job_[a-z0-9]{4,12}_[0-9a-f]{8}$")
+_MAX_TASK_LENGTH = 12_000
+_MAX_PROJECTION_OBJECT_BYTES = 64 * 1024
 _serializer = TypeSerializer()
 _clients: dict[str, Any] = {}
 
@@ -56,9 +58,10 @@ def _task_handoff(event: dict[str, Any], agent_id: str) -> dict[str, str]:
         "job_id": event.get("job_id"),
         "task_s3_uri": event.get("task_s3_uri"),
         "model": event.get("model"),
+        "task": event.get("task"),
     }
     if any(not isinstance(value, str) or not value for value in supplied.values()):
-        raise ValueError("job_id, task_s3_uri, and model must all be supplied")
+        raise ValueError("job_id, task_s3_uri, model, and task must all be supplied")
 
     job_id = supplied["job_id"]
     if not _JOB_ID_PATTERN.fullmatch(job_id):
@@ -74,11 +77,16 @@ def _task_handoff(event: dict[str, Any], agent_id: str) -> dict[str, str]:
     if supplied["task_s3_uri"] != expected_uri:
         raise ValueError("task_s3_uri does not match the trusted job and agent identity")
 
+    task = supplied["task"].strip()
+    if not task or len(task) > _MAX_TASK_LENGTH:
+        raise ValueError(f"task must contain 1-{_MAX_TASK_LENGTH} characters")
+
     return {
         "job_id": job_id,
         "task_s3_uri": expected_uri,
         "task_s3_key": task_s3_key,
         "model": model,
+        "task": task,
     }
 
 
@@ -143,6 +151,7 @@ def _reserve_slot(
         job_id=handoff["job_id"],
         task_s3_uri=handoff["task_s3_uri"],
         model=handoff["model"],
+        task=handoff["task"],
     )
     counter_key = _counter_key(orchestrator_id)
 
@@ -520,6 +529,84 @@ def _find_agent_by_instance(instance_id: str) -> dict[str, Any] | None:
     return items[0] if items else None
 
 
+def _object_is_missing(error: ClientError) -> bool:
+    code = error.response.get("Error", {}).get("Code")
+    status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return code in {"404", "NoSuchKey", "NotFound"} or status == 404
+
+
+def _read_projection_json(key: str) -> dict[str, Any] | None:
+    try:
+        response = _client("s3").get_object(
+            Bucket=os.environ["AGENT_WORKSPACE_BUCKET_NAME"],
+            Key=key,
+        )
+    except ClientError as error:
+        if _object_is_missing(error):
+            return None
+        raise
+
+    content_length = response.get("ContentLength")
+    if isinstance(content_length, int) and content_length > _MAX_PROJECTION_OBJECT_BYTES:
+        raise RuntimeError(f"terminal projection object {key} is too large")
+    raw = response["Body"].read(_MAX_PROJECTION_OBJECT_BYTES + 1)
+    if len(raw) > _MAX_PROJECTION_OBJECT_BYTES:
+        raise RuntimeError(f"terminal projection object {key} is too large")
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"terminal projection object {key} is not a JSON object")
+    return parsed
+
+
+def _elapsed_seconds(started_at: Any, finished_at: Any) -> int | None:
+    if not isinstance(started_at, str) or not isinstance(finished_at, str):
+        return None
+    try:
+        started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        finished = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    try:
+        elapsed = (finished - started).total_seconds()
+    except TypeError:
+        return None
+    return max(0, int(elapsed))
+
+
+def _terminal_projection(agent: dict[str, Any]) -> dict[str, Any]:
+    job_id = agent.get("job_id")
+    agent_id = agent.get("agent_id")
+    if not isinstance(job_id, str) or not isinstance(agent_id, str):
+        return {}
+
+    prefix = f"jobs/{job_id}/agents/{agent_id}"
+    completed = _read_projection_json(f"{prefix}/status/completed.json")
+    failed = None if completed is not None else _read_projection_json(
+        f"{prefix}/status/failed.json"
+    )
+    if completed is None and failed is None:
+        return {}
+    if failed is not None:
+        error = failed.get("error")
+        return {
+            "result_status": "failed",
+            "failure_reason": error[:500] if isinstance(error, str) else None,
+        }
+
+    telemetry = _read_projection_json(f"{prefix}/telemetry/latest.json") or {}
+    usage = telemetry.get("usage")
+    total_tokens = usage.get("total_tokens") if isinstance(usage, dict) else None
+    return {
+        "result_status": "completed",
+        "runtime_seconds": _elapsed_seconds(
+            telemetry.get("codex_started_at"), telemetry.get("codex_finished_at")
+        ),
+        "total_tokens": (
+            total_tokens if isinstance(total_tokens, int) and total_tokens >= 0 else None
+        ),
+    }
+
+
 def _handle_termination(event: dict[str, Any]) -> dict[str, Any]:
     instance_id = event["detail"]["instance-id"]
     agent = _find_agent_by_instance(instance_id)
@@ -530,6 +617,35 @@ def _handle_termination(event: dict[str, Any]) -> dict[str, Any]:
     orchestrator_id = agent["orchestrator_id"]
     agent_id = agent["agent_id"]
     table_name = os.environ["STATE_TABLE_NAME"]
+    try:
+        projection = _terminal_projection(agent)
+    except Exception as error:
+        # S3 enrichment is best-effort; a transient artifact read must never leak
+        # an active slot after EC2 has already terminated.
+        print(f"could not build terminal projection for {agent_id}: {error}")
+        projection = {}
+
+    assignments = ["active = :false", "#state = :terminated", "terminated_at = :now"]
+    values: dict[str, Any] = {
+        ":false": False,
+        ":true": True,
+        ":terminated": "TERMINATED",
+        ":now": terminated_at,
+    }
+    result_status = projection.get("result_status")
+    if isinstance(result_status, str):
+        assignments.append("result_status = :result_status")
+        values[":result_status"] = result_status
+    for field in ("runtime_seconds", "total_tokens"):
+        value = projection.get(field)
+        if isinstance(value, int) and value >= 0:
+            assignments.append(f"{field} = :{field}")
+            values[f":{field}"] = value
+    failure_reason = projection.get("failure_reason")
+    if isinstance(failure_reason, str) and failure_reason:
+        assignments.append("failure_reason = :failure_reason")
+        values[":failure_reason"] = failure_reason
+
     try:
         _client("dynamodb").transact_write_items(
             TransactItems=[
@@ -550,19 +666,10 @@ def _handle_termination(event: dict[str, Any]) -> dict[str, Any]:
                     "Update": {
                         "TableName": table_name,
                         "Key": _ddb_item(_agent_key(orchestrator_id, agent_id)),
-                        "UpdateExpression": (
-                            "SET active = :false, #state = :terminated, terminated_at = :now"
-                        ),
+                        "UpdateExpression": f"SET {', '.join(assignments)}",
                         "ConditionExpression": "active = :true",
                         "ExpressionAttributeNames": {"#state": "state"},
-                        "ExpressionAttributeValues": _ddb_item(
-                            {
-                                ":false": False,
-                                ":true": True,
-                                ":terminated": "TERMINATED",
-                                ":now": terminated_at,
-                            }
-                        ),
+                        "ExpressionAttributeValues": _ddb_item(values),
                     }
                 },
             ]

@@ -47,6 +47,15 @@ resource "aws_iam_role_policy" "lambda" {
         Resource = "${aws_s3_bucket.audit.arn}/*"
       },
       {
+        Sid    = "ReadTerminalPanelProjection"
+        Effect = "Allow"
+        Action = "s3:GetObject"
+        Resource = [
+          "${aws_s3_bucket.agent_workspace.arn}/jobs/*/agents/*/status/*.json",
+          "${aws_s3_bucket.agent_workspace.arn}/jobs/*/agents/*/telemetry/latest.json"
+        ]
+      },
+      {
         Sid    = "LaunchAndTagInstances"
         Effect = "Allow"
         Action = [

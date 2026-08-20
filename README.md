@@ -136,9 +136,10 @@ overview still uses typed mock data. AWS credentials stay on the Next.js server,
 so browser code never receives credentials or calls `RunInstances` directly.
 
 Successful data-mining launches navigate to `/jobs/<job_id>`. That page polls a
-server-side monitor endpoint which combines the job record, orchestrator EC2
-state, subagent state-table records, and job-scoped S3 artifacts. The browser
-receives only the normalized job and agent monitor data, never AWS credentials.
+server-side monitor endpoint which combines compact job and subagent DynamoDB
+projections with the live orchestrator EC2 state. Full S3 telemetry and event
+history are loaded only when an orchestrator or subagent card is opened. The
+browser receives only normalized monitor data, never AWS credentials.
 
 Terraform creates a `<project>-admin-server` IAM user for this server, but it
 does **not** create access keys. Long-lived secrets must stay out of Terraform

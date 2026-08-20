@@ -11,7 +11,6 @@ import type {
   MonitoredSubagentStatus,
   OrchestratorProgress,
 } from "@/lib/job-monitor";
-import type { AgentTelemetrySummary } from "@/lib/agent-telemetry";
 import { DEFAULT_JOB_TYPE, jobTypeLabel, requestJobEnd } from "@/lib/jobs";
 
 const POLL_INTERVAL_MS = 3000;
@@ -37,35 +36,26 @@ function describeError(caught: unknown, fallback: string) {
   return caught instanceof Error ? caught.message : fallback;
 }
 
-function localClock(value: string) {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime())
-    ? value
-    : parsed.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
-}
-
-function elapsed(start: string, finish: string | null) {
-  const startMs = new Date(start).getTime();
-  const finishMs = finish ? new Date(finish).getTime() : Date.now();
-  if (!Number.isFinite(startMs) || !Number.isFinite(finishMs)) return null;
-  const seconds = Math.max(0, Math.floor((finishMs - startMs) / 1000));
+function elapsed(seconds: number) {
   const minutes = Math.floor(seconds / 60);
   return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
 }
 
-function telemetryFacts(telemetry: AgentTelemetrySummary | null, failed: boolean) {
-  const total = telemetry?.usage.totalTokens;
-  const tokenText = total === null || total === undefined
-    ? "Tokens pending"
-    : `${total.toLocaleString()} tokens`;
-  if (!telemetry?.codexStartedAt) {
-    return { tokenText, timingText: "Codex not started" };
-  }
-  const runtime = elapsed(telemetry.codexStartedAt, telemetry.codexFinishedAt);
-  if (telemetry.codexFinishedAt || failed) {
-    return { tokenText, timingText: `${failed ? "Failed · " : "Runtime "}${runtime ?? "unavailable"}` };
-  }
-  return { tokenText, timingText: `Started ${localClock(telemetry.codexStartedAt)}` };
+function panelFacts(
+  runtimeSeconds: number | null,
+  totalTokens: number | null,
+  status: "active" | "completed" | "failed" | "terminated",
+) {
+  const unavailable = status === "failed" || status === "terminated";
+  const terminal = unavailable || status === "completed";
+  return {
+    timingText: runtimeSeconds === null
+      ? `Runtime ${terminal ? "unavailable" : "pending"}`
+      : `Runtime ${elapsed(runtimeSeconds)}`,
+    tokenText: totalTokens === null
+      ? `Tokens ${terminal ? "unavailable" : "pending"}`
+      : `${totalTokens.toLocaleString()} tokens`,
+  };
 }
 
 export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
@@ -153,9 +143,14 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
     (snapshot.job.status === "initializing" || snapshot.job.status === "running");
   const jobIsSaved =
     (snapshot.job.status === "completed" || snapshot.job.status === "failed");
-  const orchestratorFacts = telemetryFacts(
-    snapshot.orchestratorTelemetry,
-    snapshot.job.status === "failed",
+  const orchestratorFacts = panelFacts(
+    snapshot.orchestratorRuntimeSeconds,
+    snapshot.orchestratorTotalTokens,
+    snapshot.job.status === "failed"
+      ? "failed"
+      : snapshot.job.status === "completed"
+        ? "completed"
+        : "active",
   );
 
   return (
@@ -251,7 +246,17 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
           ) : (
             <div className="subagent-card-grid" aria-live="polite">
               {subagents.map((subagent, index) => {
-                const facts = telemetryFacts(subagent.telemetry, subagent.status === "failed");
+                const facts = panelFacts(
+                  subagent.runtimeSeconds,
+                  subagent.totalTokens,
+                  subagent.status === "failed"
+                    ? "failed"
+                    : subagent.status === "completed"
+                      ? "completed"
+                      : subagent.status === "terminated"
+                        ? "terminated"
+                        : "active",
+                );
                 return (
                 <article
                   className={`subagent-monitor-card subagent-${subagent.status}`}

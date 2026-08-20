@@ -1,6 +1,5 @@
 import { isJob } from "@/lib/jobs";
 import type { Job } from "@/lib/jobs";
-import type { AgentTelemetrySummary } from "@/lib/agent-telemetry";
 
 export type OrchestratorProgress =
   | "launching_orchestrator"
@@ -27,7 +26,8 @@ export type MonitoredSubagent = {
   launchedAt: string | null;
   terminatedAt: string | null;
   error: string | null;
-  telemetry: AgentTelemetrySummary | null;
+  runtimeSeconds: number | null;
+  totalTokens: number | null;
 };
 
 export type JobMonitorSnapshot = {
@@ -35,7 +35,8 @@ export type JobMonitorSnapshot = {
   progress: OrchestratorProgress;
   orchestratorEc2State: string | null;
   orchestratorError: string | null;
-  orchestratorTelemetry: AgentTelemetrySummary | null;
+  orchestratorRuntimeSeconds: number | null;
+  orchestratorTotalTokens: number | null;
   isTerminal: boolean;
   subagents: MonitoredSubagent[];
 };
@@ -61,8 +62,8 @@ function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
 }
 
-function isNullableTelemetry(value: unknown): value is AgentTelemetrySummary | null {
-  return value === null || (typeof value === "object" && value !== null);
+function isNullableNonnegativeInteger(value: unknown): value is number | null {
+  return value === null || (typeof value === "number" && Number.isInteger(value) && value >= 0);
 }
 
 function isMonitoredSubagent(value: unknown): value is MonitoredSubagent {
@@ -87,8 +88,10 @@ function isMonitoredSubagent(value: unknown): value is MonitoredSubagent {
     isNullableString(value.terminatedAt) &&
     "error" in value &&
     isNullableString(value.error) &&
-    "telemetry" in value &&
-    isNullableTelemetry(value.telemetry)
+    "runtimeSeconds" in value &&
+    isNullableNonnegativeInteger(value.runtimeSeconds) &&
+    "totalTokens" in value &&
+    isNullableNonnegativeInteger(value.totalTokens)
   );
 }
 
@@ -104,8 +107,10 @@ export function isJobMonitorSnapshot(value: unknown): value is JobMonitorSnapsho
     isNullableString(value.orchestratorEc2State) &&
     "orchestratorError" in value &&
     isNullableString(value.orchestratorError) &&
-    "orchestratorTelemetry" in value &&
-    isNullableTelemetry(value.orchestratorTelemetry) &&
+    "orchestratorRuntimeSeconds" in value &&
+    isNullableNonnegativeInteger(value.orchestratorRuntimeSeconds) &&
+    "orchestratorTotalTokens" in value &&
+    isNullableNonnegativeInteger(value.orchestratorTotalTokens) &&
     "isTerminal" in value &&
     typeof value.isTerminal === "boolean" &&
     "subagents" in value &&

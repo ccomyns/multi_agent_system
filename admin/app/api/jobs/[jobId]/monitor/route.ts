@@ -1,6 +1,6 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DescribeInstancesCommand, EC2Client } from "@aws-sdk/client-ec2";
-import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import {
   DynamoDBDocumentClient,
   GetCommand,
@@ -9,7 +9,6 @@ import {
 import { NextResponse } from "next/server";
 
 import { awsClientOptions } from "@/lib/aws";
-import { parseTelemetrySummary } from "@/lib/agent-telemetry";
 import type {
   JobMonitorSnapshot,
   MonitoredSubagent,
@@ -40,6 +39,9 @@ type JobItem = {
   orchestrator_instance_id?: unknown;
   launched_at?: unknown;
   finished_at?: unknown;
+  codex_started_at?: unknown;
+  runtime_seconds?: unknown;
+  total_tokens?: unknown;
 };
 
 type AgentItem = Record<string, unknown> & {
@@ -51,14 +53,10 @@ type AgentItem = Record<string, unknown> & {
   launched_at?: unknown;
   terminated_at?: unknown;
   failure_reason?: unknown;
-  task_s3_uri?: unknown;
-};
-
-type AgentArtifacts = {
-  inputKey: string | null;
-  completedStatusKey: string | null;
-  failedStatusKey: string | null;
-  telemetryLatestKey: string | null;
+  task?: unknown;
+  result_status?: unknown;
+  runtime_seconds?: unknown;
+  total_tokens?: unknown;
 };
 
 function json(data: unknown, init?: ResponseInit) {
@@ -118,6 +116,12 @@ function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function integerValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
 function isNotFound(error: unknown) {
   if (typeof error !== "object" || error === null) {
     return false;
@@ -156,28 +160,6 @@ async function readJsonObject(
   }
 }
 
-async function listAgentObjectKeys(s3: S3Client, bucket: string, jobId: string) {
-  const keys: string[] = [];
-  const prefix = `jobs/${jobId}/agents/`;
-  let continuationToken: string | undefined;
-  do {
-    const page = await s3.send(
-      new ListObjectsV2Command({
-        Bucket: bucket,
-        Prefix: prefix,
-        ContinuationToken: continuationToken,
-      }),
-    );
-    for (const object of page.Contents ?? []) {
-      if (object.Key) {
-        keys.push(object.Key);
-      }
-    }
-    continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
-  } while (continuationToken);
-  return keys;
-}
-
 async function queryAgentItems(
   documents: DynamoDBDocumentClient,
   stateTable: string,
@@ -207,65 +189,12 @@ async function queryAgentItems(
   return items;
 }
 
-function collectArtifacts(jobId: string, keys: string[]) {
-  const byAgent = new Map<string, AgentArtifacts>();
-  const prefix = `jobs/${jobId}/agents/`;
-  for (const key of keys) {
-    if (!key.startsWith(prefix)) {
-      continue;
-    }
-    const [agentId, ...parts] = key.slice(prefix.length).split("/");
-    if (!AGENT_ID_PATTERN.test(agentId)) {
-      continue;
-    }
-    const relative = parts.join("/");
-    if (
-      ![
-        "input.json",
-        "status/completed.json",
-        "status/failed.json",
-        "telemetry/latest.json",
-      ].includes(relative)
-    ) {
-      continue;
-    }
-    const artifacts = byAgent.get(agentId) ?? {
-      inputKey: null,
-      completedStatusKey: null,
-      failedStatusKey: null,
-      telemetryLatestKey: null,
-    };
-    if (relative === "input.json") {
-      artifacts.inputKey = key;
-    } else if (relative === "status/completed.json") {
-      artifacts.completedStatusKey = key;
-    } else if (relative === "status/failed.json") {
-      artifacts.failedStatusKey = key;
-    } else {
-      artifacts.telemetryLatestKey = key;
-    }
-    byAgent.set(agentId, artifacts);
-  }
-  return byAgent;
-}
-
-function taskKeyFromUri(uri: unknown, bucket: string) {
-  if (typeof uri !== "string") {
-    return null;
-  }
-  const prefix = `s3://${bucket}/`;
-  return uri.startsWith(prefix) ? uri.slice(prefix.length) : null;
-}
-
 function mapSubagentStatus(
   state: unknown,
-  artifacts: AgentArtifacts,
+  resultStatus?: unknown,
 ): MonitoredSubagentStatus {
-  if (artifacts.failedStatusKey) {
-    return "failed";
-  }
-  if (artifacts.completedStatusKey) {
-    return "completed";
+  if (resultStatus === "failed" || resultStatus === "completed") {
+    return resultStatus;
   }
   switch (state) {
     case "PROVISIONING":
@@ -283,52 +212,29 @@ function mapSubagentStatus(
   }
 }
 
-async function buildSubagents(
-  s3: S3Client,
-  bucket: string,
-  artifactsByAgent: Map<string, AgentArtifacts>,
-  agentItems: AgentItem[],
-) {
-  const itemByAgent = new Map<string, AgentItem>();
+function buildSubagents(agentItems: AgentItem[]) {
+  const subagents: MonitoredSubagent[] = [];
   for (const item of agentItems) {
     const agentId = stringValue(item.agent_id);
-    if (agentId && AGENT_ID_PATTERN.test(agentId)) {
-      itemByAgent.set(agentId, item);
-      const artifacts = artifactsByAgent.get(agentId) ?? {
-        inputKey: taskKeyFromUri(item.task_s3_uri, bucket),
-        completedStatusKey: null,
-        failedStatusKey: null,
-        telemetryLatestKey: null,
-      };
-      artifactsByAgent.set(agentId, artifacts);
+    if (!agentId || !AGENT_ID_PATTERN.test(agentId)) {
+      continue;
     }
+    const status = mapSubagentStatus(item.state, item.result_status);
+    const failed = status === "failed";
+    subagents.push({
+      agentId,
+      task: stringValue(item.task) ?? "Task details unavailable",
+      status,
+      instanceId: stringValue(item.instance_id),
+      active: item.active === true,
+      createdAt: stringValue(item.created_at),
+      launchedAt: stringValue(item.launched_at),
+      terminatedAt: stringValue(item.terminated_at),
+      error: stringValue(item.failure_reason),
+      runtimeSeconds: failed ? null : integerValue(item.runtime_seconds),
+      totalTokens: failed ? null : integerValue(item.total_tokens),
+    });
   }
-
-  const subagents = await Promise.all(
-    [...artifactsByAgent.entries()].map(async ([agentId, artifacts]) => {
-      const item = itemByAgent.get(agentId);
-      const [input, failure, telemetry] = await Promise.all([
-        readJsonObject(s3, bucket, artifacts.inputKey),
-        readJsonObject(s3, bucket, artifacts.failedStatusKey),
-        readJsonObject(s3, bucket, artifacts.telemetryLatestKey),
-      ]);
-      const status = mapSubagentStatus(item?.state, artifacts);
-      const result: MonitoredSubagent = {
-        agentId,
-        task: stringValue(input?.task) ?? "Task details unavailable",
-        status,
-        instanceId: stringValue(item?.instance_id),
-        active: item?.active === true,
-        createdAt: stringValue(item?.created_at) ?? stringValue(input?.created_at),
-        launchedAt: stringValue(item?.launched_at),
-        terminatedAt: stringValue(item?.terminated_at),
-        error: stringValue(failure?.error) ?? stringValue(item?.failure_reason),
-        telemetry: parseTelemetrySummary(telemetry),
-      };
-      return result;
-    }),
-  );
-
   return subagents.sort((left, right) => {
     const leftTime = left.createdAt ?? "";
     const rightTime = right.createdAt ?? "";
@@ -427,29 +333,20 @@ export async function GET(
       return errorResponse("That job type does not use the data-mining monitor.", 409);
     }
 
-    const [ec2State, objectKeys, agentItems, orchestratorTelemetryRecord] = await Promise.all([
-      describeOrchestrator(ec2, job.orchestratorInstanceId),
-      listAgentObjectKeys(s3, config.workspaceBucket, jobId),
+    const jobRecord = stored.Item as JobItem;
+    const jobIsFinished = job.status === "completed" || job.status === "failed";
+    const [ec2State, agentItems] = await Promise.all([
+      jobIsFinished
+        ? Promise.resolve(null)
+        : describeOrchestrator(ec2, job.orchestratorInstanceId),
       queryAgentItems(documents, config.stateTable, job.orchestratorInstanceId),
-      readJsonObject(
-        s3,
-        config.workspaceBucket,
-        `jobs/${jobId}/orchestrator/telemetry/latest.json`,
-      ),
     ]);
-    const artifacts = collectArtifacts(jobId, objectKeys);
-    const orchestratorTelemetry = parseTelemetrySummary(orchestratorTelemetryRecord);
-    const subagents = await buildSubagents(
-      s3,
-      config.workspaceBucket,
-      artifacts,
-      agentItems,
-    );
+    const subagents = buildSubagents(agentItems);
     const progress = progressFor(
       job,
       ec2State,
-      [...artifacts.values()].some((item) => item.inputKey !== null),
-      orchestratorTelemetry?.codexStartedAt ?? null,
+      subagents.length > 0,
+      stringValue(jobRecord.codex_started_at),
     );
 
     let orchestratorError: string | null = null;
@@ -471,8 +368,13 @@ export async function GET(
       progress: progress.progress,
       orchestratorEc2State: ec2State,
       orchestratorError,
-      orchestratorTelemetry,
-      isTerminal: progress.isTerminal,
+      orchestratorRuntimeSeconds: integerValue(jobRecord.runtime_seconds),
+      orchestratorTotalTokens: integerValue(jobRecord.total_tokens),
+      // A job can finish a few seconds before EventBridge reconciles the final
+      // subagent termination. Keep polling until those compact rows settle.
+      isTerminal: progress.isTerminal && !subagents.some(
+        (agent) => ["queued", "provisioning", "running"].includes(agent.status),
+      ),
       subagents,
     };
     return json(snapshot);

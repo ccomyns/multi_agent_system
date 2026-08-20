@@ -15,8 +15,12 @@ Records:
   multi-agent research job.
 - `pk = JOB#<job_id>`: the user request and top-level orchestrator lifecycle,
   including `type_of_job`, status, the orchestrator EC2 instance ID, and
-  timestamps. New records currently use `type_of_job = data_mining`; readers
-  treat older records without the attribute as data-mining jobs.
+  timestamps. Data-mining orchestrators also persist the compact monitor-card
+  projection: `codex_started_at`, final `runtime_seconds`, and final
+  `total_tokens`. Runtime and token totals remain null or absent until Codex
+  completes successfully. New records currently use
+  `type_of_job = data_mining`; readers treat older records without the attribute
+  as data-mining jobs.
 
 Jobs also store `has_input_file`, a boolean indicating whether the admin server
 uploaded anchor data. When true, the orchestrator downloads the deterministic
@@ -41,9 +45,12 @@ Records grouped beneath `pk = ORCHESTRATOR#<orchestrator_id>`:
 
 Agent records contain provisioning state, active status, AMI and instance type,
 TTL, EC2 instance ID, timestamps, and errors. Real-job records also include the
-job ID, canonical S3 task URI, and configured model. The `instance-index` GSI
-maps an EC2 instance ID back to its agent record so termination events can
-decrement the correct orchestrator counter exactly once.
+job ID, canonical S3 task URI, configured model, input task, and compact panel
+projection. The termination reconciler stores `result_status` plus final
+`runtime_seconds` and `total_tokens` for successful Codex runs; failed agents do
+not receive final metrics. The `instance-index` GSI maps an EC2 instance ID back
+to its agent record so termination events can decrement the correct orchestrator
+counter exactly once.
 
 The subagent-manager Lambda owns writes to this table. The orchestrator itself
 is a grouping identifier here, not an `AGENT` record.

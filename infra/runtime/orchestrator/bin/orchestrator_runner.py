@@ -60,6 +60,21 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def elapsed_seconds(started_at: Any, finished_at: Any) -> int | None:
+    if not isinstance(started_at, str) or not isinstance(finished_at, str):
+        return None
+    try:
+        started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        finished = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    try:
+        elapsed = (finished - started).total_seconds()
+    except TypeError:
+        return None
+    return max(0, int(elapsed))
+
+
 def read_utf8(path: Path, size_limit: int, label: str) -> str:
     if not path.is_file():
         raise RuntimeError(f"Codex completed without writing {label}")
@@ -595,6 +610,24 @@ approval_mode = "approve"
             "codex exec started",
             codex_started_at=started_at,
         )
+        try:
+            self.ddb.update_item(
+                TableName=self.jobs_table,
+                Key={"pk": {"S": self.job_pk}},
+                UpdateExpression="SET codex_started_at = :started",
+                ConditionExpression=(
+                    "orchestrator_instance_id = :orchestrator_instance_id AND #status = :running"
+                ),
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues={
+                    ":started": {"S": started_at},
+                    ":orchestrator_instance_id": {"S": self.orchestrator_instance_id},
+                    ":running": {"S": "running"},
+                },
+            )
+        except Exception:
+            # Panel metadata must not make the research run fail.
+            LOG.exception("could not persist orchestrator start time")
         with self.codex_log.open("ab", buffering=0) as codex_log:
             process = subprocess.Popen(
                 command,
@@ -833,7 +866,24 @@ approval_mode = "approve"
             ":status": {"S": status},
             ":now": {"S": finished_at},
         }
-        assignments = ["#status = :status", "finished_at = :now", "updated_at = :now"]
+        assignments = [
+            "#status = :status",
+            "finished_at = :now",
+            "updated_at = :now",
+        ]
+        if status == "completed":
+            runtime_seconds = elapsed_seconds(
+                self.telemetry.latest.get("codex_started_at"),
+                self.telemetry.latest.get("codex_finished_at"),
+            )
+            usage = self.telemetry.latest.get("usage")
+            total_tokens = usage.get("total_tokens") if isinstance(usage, dict) else None
+            if runtime_seconds is not None:
+                assignments.append("runtime_seconds = :runtime_seconds")
+                values[":runtime_seconds"] = {"N": str(runtime_seconds)}
+            if isinstance(total_tokens, int) and total_tokens >= 0:
+                assignments.append("total_tokens = :total_tokens")
+                values[":total_tokens"] = {"N": str(total_tokens)}
         self.ddb.transact_write_items(
             TransactItems=[
                 {

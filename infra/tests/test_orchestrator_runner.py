@@ -54,6 +54,8 @@ class OrchestratorRunnerTests(unittest.TestCase):
         run.orchestrator_instance_id = "i-1234567890abcdef0"
         run.orchestrator_model = "gpt-5.6-terra"
         run.subagent_model = "gpt-5.6-luna"
+        run.jobs_table = "jobs-table"
+        run.job_pk = f"JOB#{run.job_id}"
         run.workspace = root / "workspace"
         run.codex_home = root / "codex-home"
         run.plan_file = run.workspace / "plan.md"
@@ -67,6 +69,7 @@ class OrchestratorRunnerTests(unittest.TestCase):
         run.codex_log = root / "logs" / "codex.log"
         run.workspace_bucket = "agent-workspace-bucket"
         run.s3 = Mock()
+        run.ddb = Mock()
         run.telemetry = runner_module.TelemetryRecorder(
             s3=run.s3,
             bucket=run.workspace_bucket,
@@ -101,6 +104,29 @@ class OrchestratorRunnerTests(unittest.TestCase):
                 }
             ),
             encoding="utf-8",
+        )
+
+    def test_finish_job_persists_compact_panel_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            run.telemetry.latest.update(
+                codex_started_at="2026-01-01T00:00:00Z",
+                codex_finished_at="2026-01-01T00:02:03Z",
+                usage={"total_tokens": 4567},
+            )
+
+            run.finish_job("completed")
+
+        update = run.ddb.transact_write_items.call_args.kwargs["TransactItems"][1][
+            "Update"
+        ]
+        self.assertIn("runtime_seconds = :runtime_seconds", update["UpdateExpression"])
+        self.assertIn("total_tokens = :total_tokens", update["UpdateExpression"])
+        self.assertEqual(
+            update["ExpressionAttributeValues"][":runtime_seconds"], {"N": "123"}
+        )
+        self.assertEqual(
+            update["ExpressionAttributeValues"][":total_tokens"], {"N": "4567"}
         )
 
     def test_codex_exec_receives_task_search_model_and_writable_workspace(self) -> None:
