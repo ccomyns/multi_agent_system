@@ -28,15 +28,19 @@ valid JSON dataset. Trusted runner code maps local `/summary/results.json` to
 `jobs/<job_id>/agents/<agent_id>/summary/results_<agent_id>.json`; the agent ID
 comes from the validated launch environment rather than model output. It uploads
 the canonical data files first, then writes and uploads `status/completed.json`,
-and finally writes and uploads `completed.md` as the terminal readiness flag.
+and writes and uploads `completed.md` as the terminal readiness flag. After that
+marker is durable, trusted runner code writes `termination/request.json`; an S3
+notification invokes the dedicated terminator Lambda, which validates the
+terminal artifacts and DynamoDB identity before requesting termination of the
+exact subagent EC2 instance.
 Unexpected files from `/summary` are retained only beneath
 `debug/model-summary/`, never in the canonical `summary/` prefix. If execution
 or publication fails, the runner publishes `status/failed.json` and then
-`failure.md` when possible. The terminal marker is the last publication step;
-the runner exits immediately afterward.
+`failure.md` and a termination request when possible. The request is control-plane
+signaling rather than a research artifact, and never precedes the terminal marker.
 
-The systemd unit always invokes `shutdown -h now` after the runner exits. EC2's
-instance-initiated shutdown behavior is `terminate`, so the instance and its
-root volume are deleted. The configured TTL wraps the runner with `timeout` as
-a hard billing backstop; failures and timeouts also terminate the instance, and
-EventBridge reconciles the DynamoDB active count after EC2 reports termination.
+The systemd unit still invokes `shutdown -h now` after the runner exits, and the
+configured TTL still wraps the runner with `timeout`. These are independent
+fallbacks if the termination-request upload or notification path is unavailable.
+EC2 termination deletes the instance and root volume; EventBridge reconciles the
+DynamoDB active count only after EC2 reports confirmed termination.

@@ -18,6 +18,11 @@ output "lambda_function_name" {
   value       = aws_lambda_function.subagent_manager.function_name
 }
 
+output "subagent_terminator_function_name" {
+  description = "Lambda invoked by durable subagent termination requests."
+  value       = aws_lambda_function.subagent_terminator.function_name
+}
+
 output "state_table_name" {
   description = "DynamoDB table containing counters and active agent state."
   value       = aws_dynamodb_table.state.name

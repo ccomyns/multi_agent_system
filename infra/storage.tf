@@ -98,6 +98,19 @@ resource "aws_s3_bucket_versioning" "agent_workspace" {
   }
 }
 
+resource "aws_s3_bucket_notification" "agent_workspace" {
+  bucket = aws_s3_bucket.agent_workspace.id
+
+  lambda_function {
+    lambda_function_arn = aws_lambda_function.subagent_terminator.arn
+    events              = ["s3:ObjectCreated:Put"]
+    filter_prefix       = "jobs/"
+    filter_suffix       = "termination/request.json"
+  }
+
+  depends_on = [aws_lambda_permission.agent_workspace_termination_requests]
+}
+
 // Raw user uploads are intentionally a stricter boundary than ordinary job
 // artifacts. The admin server may write them, but only the orchestrator role
 // may retrieve their contents. Subagents receive row-level values in tasks.

@@ -7,6 +7,8 @@ current implementation contains:
 - On-demand `t3.large` orchestrator launch templates; Terraform does not create
   a persistent orchestrator instance.
 - A Lambda function that launches subagent EC2 instances.
+- A dedicated S3-triggered Lambda that terminates a subagent only after its
+  trusted runner publishes durable terminal artifacts.
 - A separate GitHub credential-broker Lambda that mints one-hour writer tokens
   for exactly the repository assigned to an active software-builder job.
 - A trusted orchestrator entrypoint that dispatches data-mining jobs to the
@@ -49,10 +51,11 @@ Browser --job_id--> Admin server --DynamoDB transaction--> job record + active-j
                              Lambda subagent manager -----> EC2 subagents
                                       |                         |
                                       +----> DynamoDB state     +----> S3 summary + JSON data
-                                      |                         +----> terminate on completion
+                                      |                         +----> terminal marker + request
                                       |
                                       +----> S3 audit records
 
+S3 termination request -----> Lambda terminator -----> EC2 termination
 Subagent terminated event -----> EventBridge -----> Lambda reconciliation
 ```
 
@@ -70,7 +73,11 @@ and lifecycle timestamps. A real subagent downloads
 supervisor adds the trusted agent ID when it uploads the dataset as
 `results_<agent_id>.json`, then uploads those data products,
 writes a brief `/result/completed.md` or `/result/failure.md` terminal marker,
-and publishes a machine-readable status record before the instance shuts down.
+publishes a machine-readable status record, and then writes a trusted
+`termination/request.json`. S3 invokes a dedicated terminator Lambda, which
+validates the request, status, marker, DynamoDB agent identity, and EC2 instance
+before requesting termination. Guest shutdown and the 30-minute TTL remain
+independent fallbacks.
 The orchestrator's local MCP server waits on the active agent IDs and returns as
 soon as any one terminal marker appears, without downloading the marker itself.
 It downloads only that agent's summary and JSON dataset, letting the orchestrator
@@ -118,6 +125,7 @@ each run and terminates it when the run is complete.
 admin/                  Next.js admin console
 infra/                  Terraform configuration
 src/subagent_manager/   Lambda implementation
+src/subagent_terminator/ S3-triggered terminal-artifact termination Lambda
 src/github_token_broker/ Repository-scoped GitHub credential broker
 tests/                  Python and Node.js unit tests
 ```
@@ -212,8 +220,9 @@ python3 -m venv .venv
 node --test tests/github_token_broker.test.mjs
 ```
 
-The tests cover the configured agent boundary, over-capacity rejection, idempotent
-request IDs, launch failure handling, and termination reconciliation.
+The tests cover the configured agent boundary, over-capacity rejection,
+idempotent request IDs, launch failure handling, terminal-artifact termination,
+and termination reconciliation.
 
 ## GitHub writer credential boundary
 

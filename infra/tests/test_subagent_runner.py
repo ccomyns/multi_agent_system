@@ -206,7 +206,7 @@ class SubagentRunnerTests(unittest.TestCase):
             self.assertEqual(run.telemetry.latest["usage"]["total_tokens"], 1000)
             self.assertEqual(run.telemetry.latest["usage"]["cached_input_tokens"], 500)
 
-    def test_completion_marker_is_uploaded_last(self) -> None:
+    def test_termination_request_is_uploaded_after_completion_marker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run = self.make_run(Path(temporary))
             run.summary_file.write_text("Work summary", encoding="utf-8")
@@ -217,8 +217,10 @@ class SubagentRunnerTests(unittest.TestCase):
             outputs = run.upload_data_outputs()
             outputs.update(run.upload_debug_artifacts())
             outputs["completion_marker_uri"] = run.terminal_marker_uri("completed")
+            outputs["termination_request_uri"] = run.termination_request_uri()
             run.upload_status("completed", **outputs)
             run.upload_terminal_marker("completed")
+            run.upload_termination_request("completed")
 
             calls = run.s3.put_object.call_args_list
             self.assertEqual(calls[0].kwargs["Key"], f"{run.agent_prefix}/summary/summary.md")
@@ -240,11 +242,21 @@ class SubagentRunnerTests(unittest.TestCase):
                 f"{run.agent_prefix}/debug/model-summary/results.json",
                 keys,
             )
-            self.assertEqual(keys[-2], f"{run.agent_prefix}/status/completed.json")
-            self.assertEqual(keys[-1], f"{run.agent_prefix}/result/completed.md")
+            self.assertEqual(keys[-3], f"{run.agent_prefix}/status/completed.json")
+            self.assertEqual(keys[-2], f"{run.agent_prefix}/result/completed.md")
+            self.assertEqual(keys[-1], f"{run.agent_prefix}/termination/request.json")
             self.assertEqual(
                 run.completed_file.read_text(encoding="utf-8"),
                 "Completed successfully.\n",
+            )
+            request = json.loads(run.s3.put_object.call_args.kwargs["Body"])
+            self.assertEqual(request["state"], "completed")
+            self.assertEqual(request["job_id"], run.job_id)
+            self.assertEqual(request["agent_id"], run.agent_id)
+            self.assertEqual(request["subagent_instance_id"], run.subagent_instance_id)
+            self.assertEqual(
+                request["terminal_marker_key"],
+                f"{run.agent_prefix}/result/completed.md",
             )
 
     def test_model_results_filename_is_mapped_to_trusted_agent_key(self) -> None:

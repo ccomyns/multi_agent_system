@@ -75,6 +75,70 @@ resource "aws_iam_role_policy" "lambda" {
   })
 }
 
+resource "aws_iam_role" "subagent_terminator" {
+  name = "${var.project_name}-subagent-terminator"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "subagent_terminator_logs" {
+  role       = aws_iam_role.subagent_terminator.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy" "subagent_terminator" {
+  name = "validate-terminal-artifacts-and-terminate"
+  role = aws_iam_role.subagent_terminator.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ReadAndAnnotateAgentState"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:UpdateItem"
+        ]
+        Resource = aws_dynamodb_table.state.arn
+      },
+      {
+        Sid    = "ValidateTerminalArtifacts"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectVersion"
+        ]
+        Resource = [
+          "${aws_s3_bucket.agent_workspace.arn}/jobs/*/agents/*/termination/request.json",
+          "${aws_s3_bucket.agent_workspace.arn}/jobs/*/agents/*/status/*.json",
+          "${aws_s3_bucket.agent_workspace.arn}/jobs/*/agents/*/result/*.md"
+        ]
+      },
+      {
+        Sid      = "TerminateManagedSubagents"
+        Effect   = "Allow"
+        Action   = "ec2:TerminateInstances"
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "ec2:ResourceTag/ManagedBy" = "subagent-manager"
+          }
+        }
+      }
+    ]
+  })
+}
+
 // This role is the only runtime identity allowed to decrypt the GitHub writer
 // App private key. Orchestrators receive repository-scoped installation tokens
 // from the broker and never receive this role or its SSM/KMS permissions.

@@ -70,7 +70,7 @@ resource "aws_imagebuilder_component" "agent_core" {
                   npm install --global "@openai/codex@${var.codex_cli_version}"
 
                   curl -fsSL https://install.duckdb.org -o /tmp/install-duckdb.sh
-                  HOME=/root sh /tmp/install-duckdb.sh
+                  HOME=/root bash /tmp/install-duckdb.sh
                   install -m 0755 /root/.duckdb/cli/latest/duckdb /usr/local/bin/duckdb
 
                   {

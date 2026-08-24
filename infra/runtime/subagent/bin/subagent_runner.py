@@ -406,6 +406,12 @@ exclude_tmpdir_env_var = true
         marker_name = "completed.md" if state == "completed" else "failure.md"
         return f"s3://{self.workspace_bucket}/{self.agent_prefix}/result/{marker_name}"
 
+    def termination_request_uri(self) -> str:
+        return (
+            f"s3://{self.workspace_bucket}/{self.agent_prefix}/"
+            "termination/request.json"
+        )
+
     def upload_terminal_marker(self, state: str) -> str:
         if state == "completed":
             marker = self.completed_file
@@ -424,6 +430,31 @@ exclude_tmpdir_env_var = true
             Key=key,
             Body=marker.read_bytes(),
             ContentType="text/markdown; charset=utf-8",
+            ServerSideEncryption="AES256",
+        )
+        return f"s3://{self.workspace_bucket}/{key}"
+
+    def upload_termination_request(self, state: str) -> str:
+        if state not in {"completed", "failed"}:
+            raise ValueError(f"unsupported terminal request state: {state}")
+        marker_name = "completed.md" if state == "completed" else "failure.md"
+        key = f"{self.agent_prefix}/termination/request.json"
+        record = {
+            "schema_version": 1,
+            "state": state,
+            "job_id": self.job_id,
+            "orchestrator_instance_id": self.orchestrator_instance_id,
+            "agent_id": self.agent_id,
+            "subagent_instance_id": self.subagent_instance_id,
+            "status_key": f"{self.agent_prefix}/status/{state}.json",
+            "terminal_marker_key": f"{self.agent_prefix}/result/{marker_name}",
+            "recorded_at": utc_now(),
+        }
+        self.s3.put_object(
+            Bucket=self.workspace_bucket,
+            Key=key,
+            Body=json.dumps(record, indent=2, sort_keys=True).encode("utf-8"),
+            ContentType="application/json",
             ServerSideEncryption="AES256",
         )
         return f"s3://{self.workspace_bucket}/{key}"
@@ -476,6 +507,7 @@ def main() -> int:
         outputs.update(run.upload_debug_artifacts())
         run.telemetry.record("final_artifact_sync_finished", "final artifacts synced")
         outputs["completion_marker_uri"] = run.terminal_marker_uri("completed")
+        outputs["termination_request_uri"] = run.termination_request_uri()
         run.telemetry.record(
             "run_completed",
             "subagent completed; publishing terminal status and marker",
@@ -483,9 +515,15 @@ def main() -> int:
         run.telemetry.publish_raw_events(strict=True)
         run.telemetry.publish(strict=True)
         run.upload_status("completed", **outputs)
-        # This is deliberately the final S3 write. Exiting the service triggers
-        # instance shutdown only after the durable artifact bundle is complete.
         run.upload_terminal_marker("completed")
+        try:
+            # This trusted control-plane signal is written only after the terminal
+            # marker is durable. Guest shutdown and the TTL remain fallbacks.
+            run.upload_termination_request("completed")
+        except Exception:
+            LOG.exception(
+                "could not request control-plane termination; relying on guest shutdown"
+            )
         LOG.info("completed agent %s; service shutdown will terminate the instance", run.agent_id)
         return 0
     except Exception as error:
@@ -522,6 +560,7 @@ def main() -> int:
                     error_type=type(error).__name__,
                     error=str(error)[:1000],
                     failure_marker_uri=run.terminal_marker_uri("failed"),
+                    termination_request_uri=run.termination_request_uri(),
                     **artifacts,
                 )
             except Exception:
@@ -531,6 +570,14 @@ def main() -> int:
                 run.upload_terminal_marker("failed")
             except Exception:
                 LOG.exception("could not upload subagent failure marker")
+            else:
+                try:
+                    run.upload_termination_request("failed")
+                except Exception:
+                    LOG.exception(
+                        "could not request control-plane termination; "
+                        "relying on guest shutdown"
+                    )
         return 1
 
 

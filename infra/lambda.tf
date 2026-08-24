@@ -47,6 +47,53 @@ resource "aws_lambda_function" "subagent_manager" {
   ]
 }
 
+data "archive_file" "subagent_terminator" {
+  type        = "zip"
+  source_file = "${path.module}/../src/subagent_terminator/handler.py"
+  output_path = "${path.module}/subagent-terminator.zip"
+}
+
+resource "aws_cloudwatch_log_group" "subagent_terminator" {
+  name              = "/aws/lambda/${var.project_name}-subagent-terminator"
+  retention_in_days = 14
+}
+
+resource "aws_lambda_function" "subagent_terminator" {
+  function_name = "${var.project_name}-subagent-terminator"
+  description   = "Terminate a subagent after its durable terminal artifacts reach S3."
+  role          = aws_iam_role.subagent_terminator.arn
+  handler       = "handler.lambda_handler"
+  runtime       = "python3.13"
+  architectures = ["arm64"]
+  timeout       = 30
+  memory_size   = 128
+
+  filename         = data.archive_file.subagent_terminator.output_path
+  source_code_hash = data.archive_file.subagent_terminator.output_base64sha256
+
+  environment {
+    variables = {
+      AGENT_WORKSPACE_BUCKET_NAME = aws_s3_bucket.agent_workspace.id
+      STATE_TABLE_NAME            = aws_dynamodb_table.state.name
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.subagent_terminator,
+    aws_iam_role_policy.subagent_terminator,
+    aws_iam_role_policy_attachment.subagent_terminator_logs,
+  ]
+}
+
+resource "aws_lambda_permission" "agent_workspace_termination_requests" {
+  statement_id   = "AllowAgentWorkspaceTerminationRequests"
+  action         = "lambda:InvokeFunction"
+  function_name  = aws_lambda_function.subagent_terminator.function_name
+  principal      = "s3.amazonaws.com"
+  source_arn     = aws_s3_bucket.agent_workspace.arn
+  source_account = data.aws_caller_identity.current.account_id
+}
+
 data "archive_file" "github_token_broker" {
   type        = "zip"
   source_dir  = "${path.module}/../src/github_token_broker"
