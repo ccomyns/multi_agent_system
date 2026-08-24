@@ -13,6 +13,21 @@ export type SelectedResultObject = {
   relativePath: string;
 };
 
+export function jobScopedUploadPath(relativePath: string, jobId: string) {
+  if (relativePath.endsWith("/")) return relativePath;
+
+  const lastSlash = relativePath.lastIndexOf("/");
+  const directory = relativePath.slice(0, lastSlash + 1);
+  const fileName = relativePath.slice(lastSlash + 1);
+  const extensionIndex = fileName.lastIndexOf(".");
+
+  if (extensionIndex <= 0) {
+    return `${directory}${fileName}#${jobId}`;
+  }
+
+  return `${directory}${fileName.slice(0, extensionIndex)}#${jobId}${fileName.slice(extensionIndex)}`;
+}
+
 export function resultArtifacts(objects: ListedResultObject[], prefix: string) {
   const folders = new Map<string, ResultArtifact>();
   const files: ResultArtifact[] = [];

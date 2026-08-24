@@ -12,6 +12,7 @@ import { awsClientOptions } from "@/lib/aws";
 import { DEFAULT_JOB_TYPE, isJobType, JOB_ID_PATTERN } from "@/lib/jobs";
 import { listRootProjects } from "@/lib/project-storage";
 import {
+  jobScopedUploadPath,
   listObjectsUnderPrefix,
   selectResultObjects,
   type SelectedResultObject,
@@ -137,6 +138,7 @@ async function copySelectedObjects(
   sourceBucket: string,
   destinationBucket: string,
   projectName: string,
+  jobId: string,
   selectedObjects: SelectedResultObject[],
 ) {
   for (let index = 0; index < selectedObjects.length; index += COPY_CONCURRENCY) {
@@ -147,7 +149,7 @@ async function copySelectedObjects(
           new CopyObjectCommand({
             Bucket: destinationBucket,
             CopySource: copySource(sourceBucket, object.sourceKey),
-            Key: `${projectName}/${object.relativePath}`,
+            Key: `${projectName}/${jobScopedUploadPath(object.relativePath, jobId)}`,
           }),
         ),
       ),
@@ -296,6 +298,7 @@ export async function POST(
       workspaceBucket,
       globalMemoryBucket,
       parsed.projectName,
+      jobId,
       selectedObjects,
     );
     return json({
