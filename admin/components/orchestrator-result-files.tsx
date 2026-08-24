@@ -2,6 +2,7 @@
 
 import {
   ArrowLeft,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock3,
@@ -15,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   isProjectsResponse,
@@ -74,12 +75,14 @@ export function OrchestratorResultFiles({ jobId }: { jobId: string }) {
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [selectedProject, setSelectedProject] = useState("");
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [projectModalView, setProjectModalView] = useState<ProjectModalView | null>(null);
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
   const [projectActionError, setProjectActionError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+  const projectPickerRef = useRef<HTMLDivElement>(null);
 
   const loadArtifacts = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -153,12 +156,27 @@ export function OrchestratorResultFiles({ jobId }: { jobId: string }) {
     if (!projectModalView) return;
     function closeOnEscape(event: KeyboardEvent) {
       if (event.key === "Escape" && !uploading) {
-        setProjectModalView(null);
+        if (projectPickerOpen) setProjectPickerOpen(false);
+        else setProjectModalView(null);
       }
     }
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [projectModalView, uploading]);
+  }, [projectModalView, projectPickerOpen, uploading]);
+
+  useEffect(() => {
+    if (!projectPickerOpen) return;
+    function closeProjectPicker(event: MouseEvent) {
+      if (
+        event.target instanceof Node &&
+        !projectPickerRef.current?.contains(event.target)
+      ) {
+        setProjectPickerOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", closeProjectPicker);
+    return () => document.removeEventListener("mousedown", closeProjectPicker);
+  }, [projectPickerOpen]);
 
   const filteredArtifacts = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -186,6 +204,7 @@ export function OrchestratorResultFiles({ jobId }: { jobId: string }) {
   }
 
   function openCreateProject() {
+    setProjectPickerOpen(false);
     setProjectName("");
     setProjectDescription("");
     setProjectActionError(null);
@@ -193,6 +212,7 @@ export function OrchestratorResultFiles({ jobId }: { jobId: string }) {
   }
 
   function openProjectModal() {
+    setProjectPickerOpen(false);
     setProjectActionError(null);
     setProjectModalView("upload");
     void loadProjects();
@@ -200,12 +220,14 @@ export function OrchestratorResultFiles({ jobId }: { jobId: string }) {
 
   function closeProjectModal() {
     if (uploading) return;
+    setProjectPickerOpen(false);
     setProjectActionError(null);
     setProjectModalView(null);
   }
 
   function returnToProjectSelection() {
     if (uploading) return;
+    setProjectPickerOpen(false);
     setProjectActionError(null);
     setProjectModalView("upload");
   }
@@ -509,46 +531,83 @@ export function OrchestratorResultFiles({ jobId }: { jobId: string }) {
                     <Plus size={17} strokeWidth={1.8} aria-hidden="true" />
                   </button>
 
-                  <label
-                    className={selectedProject ? "result-project-select has-selection" : "result-project-select"}
-                    htmlFor="result-project-select"
-                  >
-                    <span>Select a Project</span>
-                    <div>
-                      <select
-                        id="result-project-select"
-                        value={selectedProject}
-                        disabled={projectsLoading || uploading}
-                        onChange={(event) => {
-                          setSelectedProject(event.target.value);
-                          setProjectActionError(null);
-                        }}
-                      >
-                        <option value="">
-                          {projectsLoading
-                            ? "Loading projects…"
-                            : projectsError
-                              ? "Projects unavailable"
-                              : projects.length === 0
-                                ? "No projects found"
-                                : "Choose a project"}
-                        </option>
-                        {projects.map((project) => (
-                          <option key={project.name} value={project.name}>{project.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </label>
-                </div>
-
-                {projectsError ? (
-                  <div className="result-project-inline-error" role="alert">
-                    <span>{projectsError}</span>
-                    <button type="button" disabled={projectsLoading} onClick={() => void loadProjects()}>
-                      {projectsLoading ? "Loading…" : "Try again"}
+                  <div className="result-project-picker" ref={projectPickerRef}>
+                    <button
+                      className={
+                        projectPickerOpen
+                          ? "result-project-picker-trigger is-open"
+                          : selectedProject
+                            ? "result-project-picker-trigger has-selection"
+                            : "result-project-picker-trigger"
+                      }
+                      type="button"
+                      disabled={uploading}
+                      aria-expanded={projectPickerOpen}
+                      aria-controls="result-project-picker-menu"
+                      onClick={() => setProjectPickerOpen((current) => !current)}
+                    >
+                      <span>
+                        <strong>Select a Project</strong>
+                        <small>{selectedProject || "Choose a past project"}</small>
+                      </span>
+                      <ChevronDown size={17} strokeWidth={1.8} aria-hidden="true" />
                     </button>
+
+                    {projectPickerOpen ? (
+                      <div
+                        className="result-project-picker-menu"
+                        id="result-project-picker-menu"
+                        role="listbox"
+                        aria-label="Project upload destination"
+                      >
+                        {projectsLoading ? (
+                          <div className="result-project-picker-state" role="status">
+                            <RefreshCw
+                              className="result-project-picker-spin"
+                              size={15}
+                              aria-hidden="true"
+                            />
+                            Loading projects…
+                          </div>
+                        ) : projectsError ? (
+                          <div className="result-project-picker-state is-error" role="alert">
+                            <span>{projectsError}</span>
+                            <button type="button" onClick={() => void loadProjects()}>
+                              Try again
+                            </button>
+                          </div>
+                        ) : projects.length === 0 ? (
+                          <div className="result-project-picker-state">
+                            No project folders found.
+                          </div>
+                        ) : (
+                          <div className="result-project-picker-options">
+                            {projects.map((project) => (
+                              <button
+                                className={
+                                  selectedProject === project.name
+                                    ? "is-selected"
+                                    : undefined
+                                }
+                                key={project.name}
+                                type="button"
+                                role="option"
+                                aria-selected={selectedProject === project.name}
+                                onClick={() => {
+                                  setSelectedProject(project.name);
+                                  setProjectActionError(null);
+                                  setProjectPickerOpen(false);
+                                }}
+                              >
+                                {project.name}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
-                ) : null}
+                </div>
 
                 {projectActionError ? (
                   <div className="result-project-action-error" role="alert">
