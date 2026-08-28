@@ -75,4 +75,5 @@ temp/
 /.codex-memory.md
 
 
-test_9_firms.json
+
+/test_data/*
