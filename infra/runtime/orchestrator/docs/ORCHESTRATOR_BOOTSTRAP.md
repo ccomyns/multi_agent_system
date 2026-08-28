@@ -5,10 +5,11 @@ The normal EC2 launch template gets its short, job-specific user data from
 `/etc/multi-agent/orchestrator.env`, and starts
 `multi-agent-orchestrator.service`.
 
-The durable runtime source lives under `runtime/orchestrator/`. Terraform
-packages that whole directory as a versioned ZIP artifact in the private
-agent-workspace bucket. EC2 Image Builder downloads and expands it under
-`/opt/multi-agent/runtime`; this
+The durable data-mining runtime source lives under `runtime/orchestrator/`.
+The independent software-builder runtime lives under
+`runtime/orch_software_builder/`. Terraform packages each directory as its own
+versioned ZIP artifact in the private agent-workspace bucket. EC2 Image Builder
+downloads and expands both under `/opt/multi-agent/runtime`; this
 keeps scripts and documentation out of the 16 KB inline component document and
 lets the bundle grow independently. The systemd service is installed disabled
 and is started by the orchestrator launch template.

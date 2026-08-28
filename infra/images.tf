@@ -134,6 +134,12 @@ resource "aws_imagebuilder_component" "orchestrator_runtime" {
                 destination         = "/tmp/orchestrator-runtime.zip"
                 expectedBucketOwner = data.aws_caller_identity.current.account_id
                 overwrite           = true
+              },
+              {
+                source              = "s3://${aws_s3_bucket.agent_workspace.id}/${aws_s3_object.software_builder_runtime.key}"
+                destination         = "/tmp/software-builder-runtime.zip"
+                expectedBucketOwner = data.aws_caller_identity.current.account_id
+                overwrite           = true
               }
             ]
           },
@@ -167,9 +173,13 @@ resource "aws_imagebuilder_component" "orchestrator_runtime" {
 
                   echo "${filesha256(data.archive_file.orchestrator_runtime.output_path)}  /tmp/orchestrator-runtime.zip" \
                     | sha256sum --check
+                  echo "${filesha256(data.archive_file.software_builder_runtime.output_path)}  /tmp/software-builder-runtime.zip" \
+                    | sha256sum --check
                   install -d -o root -g root -m 0755 /opt/multi-agent/runtime
                   python3 -m zipfile --extract \
                     /tmp/orchestrator-runtime.zip /opt/multi-agent/runtime
+                  python3 -m zipfile --extract \
+                    /tmp/software-builder-runtime.zip /opt/multi-agent/runtime
                   chown -R root:root /opt/multi-agent/runtime
                   find /opt/multi-agent/runtime -type d -exec chmod 0755 {} +
                   find /opt/multi-agent/runtime -type f -exec chmod 0644 {} +
@@ -178,7 +188,7 @@ resource "aws_imagebuilder_component" "orchestrator_runtime" {
                   chmod 0755 /opt/multi-agent/runtime/bin/orchestrator_software_runner.py
                   chmod 0755 /opt/multi-agent/runtime/bin/github_credential_helper.py
                   chmod 0755 /opt/multi-agent/runtime/bin/spawn-agent-mcp
-                  rm -f /tmp/orchestrator-runtime.zip
+                  rm -f /tmp/orchestrator-runtime.zip /tmp/software-builder-runtime.zip
                   apt-get clean
                   rm -rf /var/lib/apt/lists/*
 

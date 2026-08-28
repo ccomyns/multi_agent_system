@@ -21,17 +21,24 @@ if "boto3" not in sys.modules:
     boto3_stub.client = Mock()
     sys.modules["boto3"] = boto3_stub
 
-BIN_DIR = (
+ORCHESTRATOR_BIN_DIR = (
     Path(__file__).resolve().parents[1]
     / "runtime"
     / "orchestrator"
     / "bin"
 )
-sys.path.insert(0, str(BIN_DIR))
+SOFTWARE_BUILDER_BIN_DIR = (
+    Path(__file__).resolve().parents[1]
+    / "runtime"
+    / "orch_software_builder"
+    / "bin"
+)
+sys.path.insert(0, str(ORCHESTRATOR_BIN_DIR))
+sys.path.insert(0, str(SOFTWARE_BUILDER_BIN_DIR))
 
 
-def load_module(name: str, filename: str):
-    specification = importlib.util.spec_from_file_location(name, BIN_DIR / filename)
+def load_module(name: str, filename: str, bin_dir: Path):
+    specification = importlib.util.spec_from_file_location(name, bin_dir / filename)
     assert specification and specification.loader
     module = importlib.util.module_from_spec(specification)
     sys.modules[name] = module
@@ -39,15 +46,25 @@ def load_module(name: str, filename: str):
     return module
 
 
-entrypoint_module = load_module("orchestrator_entrypoint", "orchestrator_entrypoint.py")
+entrypoint_module = load_module(
+    "orchestrator_entrypoint",
+    "orchestrator_entrypoint.py",
+    ORCHESTRATOR_BIN_DIR,
+)
 credentials_module = load_module(
     "software_github_credentials",
     "software_github_credentials.py",
+    SOFTWARE_BUILDER_BIN_DIR,
 )
-helper_module = load_module("github_credential_helper", "github_credential_helper.py")
+helper_module = load_module(
+    "github_credential_helper",
+    "github_credential_helper.py",
+    SOFTWARE_BUILDER_BIN_DIR,
+)
 runner_module = load_module(
     "orchestrator_software_runner",
     "orchestrator_software_runner.py",
+    SOFTWARE_BUILDER_BIN_DIR,
 )
 
 RepositoryCredentials = credentials_module.RepositoryCredentials
@@ -57,18 +74,20 @@ SoftwareOrchestratorRun = runner_module.SoftwareOrchestratorRun
 class SoftwareRunnerSeparationTests(unittest.TestCase):
     def test_dispatcher_maps_each_job_type_to_a_distinct_runner(self) -> None:
         self.assertEqual(
-            entrypoint_module.runner_path("data_mining", BIN_DIR).name,
+            entrypoint_module.runner_path("data_mining", ORCHESTRATOR_BIN_DIR).name,
             "orchestrator_runner.py",
         )
         self.assertEqual(
-            entrypoint_module.runner_path("software_builder", BIN_DIR).name,
+            entrypoint_module.runner_path("software_builder", ORCHESTRATOR_BIN_DIR).name,
             "orchestrator_software_runner.py",
         )
         with self.assertRaisesRegex(RuntimeError, "unsupported TYPE_OF_JOB"):
-            entrypoint_module.runner_path("unknown", BIN_DIR)
+            entrypoint_module.runner_path("unknown", ORCHESTRATOR_BIN_DIR)
 
     def test_software_runner_has_no_data_mining_or_subagent_runtime_dependency(self) -> None:
-        source = (BIN_DIR / "orchestrator_software_runner.py").read_text(encoding="utf-8")
+        source = (SOFTWARE_BUILDER_BIN_DIR / "orchestrator_software_runner.py").read_text(
+            encoding="utf-8"
+        )
         self.assertNotIn("from orchestrator_runner", source)
         self.assertNotIn("import orchestrator_runner", source)
         self.assertNotIn("SPAWN_AGENT_MCP_COMMAND", source)

@@ -92,6 +92,9 @@ jobs use `orchestrator_software_runner.py`; that runner neither imports the
 data-mining runner nor configures the subagent MCP server. It asks the GitHub
 broker for the assigned repository, clones it under the software job directory,
 and starts Codex with the cloned repository root as its working directory.
+Their durable sources are separated under `infra/runtime/orchestrator/` and
+`infra/runtime/orch_software_builder/`, respectively, and are packaged as
+independent Image Builder artifacts.
 
 Before a successful orchestrator shuts down, it uploads three durable outputs
 under `jobs/<job_id>/result/`: `plan.md`, the narrative `final.md`, and a
@@ -124,6 +127,8 @@ each run and terminates it when the run is complete.
 ```text
 admin/                  Next.js admin console
 infra/                  Terraform configuration
+infra/runtime/orchestrator/ Data-mining orchestrator runtime
+infra/runtime/orch_software_builder/ Software-builder orchestrator runtime
 src/subagent_manager/   Lambda implementation
 src/subagent_terminator/ S3-triggered terminal-artifact termination Lambda
 src/github_token_broker/ Repository-scoped GitHub credential broker
