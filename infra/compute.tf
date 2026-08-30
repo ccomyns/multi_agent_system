@@ -124,3 +124,65 @@ resource "aws_launch_template" "orchestrator" {
     }
   }
 }
+
+resource "aws_launch_template" "software_builder_orchestrator" {
+  name_prefix            = "${var.project_name}-software-builder-orchestrator-"
+  description            = "On-demand orchestrator for software-builder runs."
+  image_id               = local.software_builder_orchestrator_ami_id
+  instance_type          = var.orchestrator_instance_type
+  update_default_version = true
+
+  instance_initiated_shutdown_behavior = "terminate"
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.orchestrator.name
+  }
+
+  network_interfaces {
+    associate_public_ip_address = true
+    delete_on_termination       = true
+    device_index                = 0
+    security_groups             = [aws_security_group.instances.id]
+    subnet_id                   = aws_subnet.public.id
+  }
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_protocol_ipv6          = "disabled"
+    http_put_response_hop_limit = 1
+    http_tokens                 = "required"
+    instance_metadata_tags      = "enabled"
+  }
+
+  block_device_mappings {
+    device_name = data.aws_ami.ubuntu_2404.root_device_name
+
+    ebs {
+      delete_on_termination = true
+      encrypted             = true
+      volume_size           = var.orchestrator_root_volume_size_gb
+      volume_type           = "gp3"
+    }
+  }
+
+  user_data = base64encode(local.orchestrator_bootstrap)
+
+  tag_specifications {
+    resource_type = "instance"
+
+    tags = {
+      Name     = "${var.project_name}-software-builder-orchestrator"
+      Role     = "orchestrator"
+      Workload = "software_builder"
+    }
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+
+    tags = {
+      Role     = "orchestrator"
+      Workload = "software_builder"
+    }
+  }
+}

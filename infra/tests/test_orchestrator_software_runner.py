@@ -72,6 +72,29 @@ SoftwareOrchestratorRun = runner_module.SoftwareOrchestratorRun
 
 
 class SoftwareRunnerSeparationTests(unittest.TestCase):
+    def test_software_builder_uses_a_distinct_ami_and_launch_template(self) -> None:
+        infra = Path(__file__).resolve().parents[1]
+        images = (infra / "images.tf").read_text(encoding="utf-8")
+        compute = (infra / "compute.tf").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'resource "aws_imagebuilder_image_recipe" "software_builder_orchestrator"',
+            images,
+        )
+        self.assertIn(
+            'resource "aws_imagebuilder_image" "software_builder_orchestrator"',
+            images,
+        )
+        self.assertIn("software_builder_orchestrator_ami_id = one(", images)
+        self.assertIn(
+            'resource "aws_launch_template" "software_builder_orchestrator"',
+            compute,
+        )
+        self.assertIn(
+            "image_id               = local.software_builder_orchestrator_ami_id",
+            compute,
+        )
+
     def test_dispatcher_maps_each_job_type_to_a_distinct_runner(self) -> None:
         self.assertEqual(
             entrypoint_module.runner_path("data_mining", ORCHESTRATOR_BIN_DIR).name,

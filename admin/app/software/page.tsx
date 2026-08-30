@@ -16,6 +16,8 @@ import {
   isProjectsResponse,
   type ProjectSummary,
 } from "@/lib/project-uploads";
+import { requestJobLaunch } from "@/lib/jobs";
+import { useJobs } from "@/lib/use-jobs";
 
 interface PendingRepository {
   name: string;
@@ -34,6 +36,7 @@ function responseError(value: unknown, fallback: string) {
 }
 
 export default function SoftwareBuilderPage() {
+  const [idea, setIdea] = useState("");
   const [contextOpen, setContextOpen] = useState(false);
   const [repositoryPickerOpen, setRepositoryPickerOpen] = useState(false);
   const [createRepositoryOpen, setCreateRepositoryOpen] = useState(false);
@@ -60,6 +63,12 @@ export default function SoftwareBuilderPage() {
   const repositoryPickerRef = useRef<HTMLDivElement>(null);
   const contextPickerRef = useRef<HTMLDivElement>(null);
   const createRepositoryButtonRef = useRef<HTMLButtonElement>(null);
+  const {
+    activeJob,
+    error: jobsError,
+    hydrated: jobsHydrated,
+    refresh: refreshJobs,
+  } = useJobs();
 
   const closeCreateRepository = useCallback(() => {
     setCreateRepositoryOpen(false);
@@ -250,50 +259,78 @@ export default function SoftwareBuilderPage() {
     setSubmitError(null);
     setSubmitNotice(null);
 
-    if (!pendingRepository) {
-      if (selectedRepository) {
-        setSubmitNotice(
-          `${selectedRepository.fullName} is selected. No new repository was created.`,
-        );
-      }
+    const originalTask = idea.trim();
+    if (
+      !originalTask ||
+      submitting ||
+      activeJob ||
+      (!pendingRepository && !selectedRepository)
+    ) {
       return;
     }
 
     setSubmitting(true);
+    let repository = selectedRepository;
+    let createdRepositoryName: string | null = null;
     try {
-      const response = await fetch("/api/github/repositories", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(pendingRepository),
-      });
-      const payload: unknown = await response.json();
-      if (!response.ok) {
-        throw new Error(
-          responseError(
-            payload,
-            `Repository creation failed (${response.status}).`,
-          ),
+      if (pendingRepository) {
+        const response = await fetch("/api/github/repositories", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(pendingRepository),
+        });
+        const payload: unknown = await response.json();
+        if (!response.ok) {
+          throw new Error(
+            responseError(
+              payload,
+              `Repository creation failed (${response.status}).`,
+            ),
+          );
+        }
+        if (!isCreateGitHubRepositoryResponse(payload)) {
+          throw new Error("The admin server returned an unexpected repository.");
+        }
+
+        const createdRepository = payload.repository;
+        repository = createdRepository;
+        createdRepositoryName = createdRepository.fullName;
+        setOrganization(payload.organization);
+        setRepositories((current) =>
+          [
+            ...current.filter((item) => item.id !== createdRepository.id),
+            createdRepository,
+          ].sort((left, right) => left.name.localeCompare(right.name)),
         );
-      }
-      if (!isCreateGitHubRepositoryResponse(payload)) {
-        throw new Error("The admin server returned an unexpected repository.");
+        setSelectedRepository(createdRepository);
+        setPendingRepository(null);
       }
 
-      const createdRepository = payload.repository;
-      setOrganization(payload.organization);
-      setRepositories((current) =>
-        [...current.filter((repository) => repository.id !== createdRepository.id), createdRepository].sort(
-          (left, right) => left.name.localeCompare(right.name),
-        ),
+      if (!repository) {
+        throw new Error("Select or configure a GitHub repository before submitting.");
+      }
+
+      const job = await requestJobLaunch(
+        originalTask,
+        "software_builder",
+        null,
+        repository.id,
       );
-      setSelectedRepository(createdRepository);
-      setPendingRepository(null);
-      setSubmitNotice(`${createdRepository.fullName} was created and selected.`);
+      setIdea("");
+      setSubmitNotice(
+        `${job.jobId} launched for ${repository.fullName}.`,
+      );
+      await refreshJobs();
     } catch (caught) {
+      const prefix = createdRepositoryName
+        ? `${createdRepositoryName} was created, but the job was not launched. `
+        : "";
       setSubmitError(
-        caught instanceof Error
-          ? caught.message
-          : "The repository could not be created.",
+        `${prefix}${
+          caught instanceof Error
+            ? caught.message
+            : "The software-builder job could not be launched."
+        }`,
       );
     } finally {
       setSubmitting(false);
@@ -316,7 +353,16 @@ export default function SoftwareBuilderPage() {
                   </label>
                   <textarea
                     id="software-idea"
+                    data-testid="software-idea"
                     placeholder="Describe what you would like to build…"
+                    value={idea}
+                    maxLength={4000}
+                    disabled={submitting || Boolean(activeJob)}
+                    onChange={(event) => {
+                      setIdea(event.target.value);
+                      setSubmitError(null);
+                      setSubmitNotice(null);
+                    }}
                   />
                 </div>
               </section>
@@ -458,9 +504,9 @@ export default function SoftwareBuilderPage() {
                     </div>
                   ) : null}
 
-                  {submitError ? (
+                  {submitError || jobsError ? (
                     <div className="software-repository-submit-state is-error" role="alert">
-                      {submitError}
+                      {submitError ?? jobsError}
                     </div>
                   ) : submitNotice ? (
                     <div className="software-repository-submit-state" role="status">
@@ -553,11 +599,19 @@ export default function SoftwareBuilderPage() {
                 data-testid="software-builder-submit"
                 type="button"
                 disabled={
-                  submitting || (!pendingRepository && !selectedRepository)
+                  submitting ||
+                  !jobsHydrated ||
+                  Boolean(activeJob) ||
+                  idea.trim().length === 0 ||
+                  (!pendingRepository && !selectedRepository)
                 }
                 onClick={() => void submitSoftwareBuilder()}
               >
-                {submitting ? "CREATING REPO…" : "SUBMIT"}
+                {submitting
+                  ? pendingRepository
+                    ? "CREATING REPO…"
+                    : "LAUNCHING…"
+                  : "SUBMIT"}
               </button>
             </footer>
           </div>

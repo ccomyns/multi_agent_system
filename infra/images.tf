@@ -468,6 +468,45 @@ resource "aws_imagebuilder_image_recipe" "orchestrator" {
   }
 }
 
+// Software Builder gets an independently versioned recipe and AMI. The two
+// recipes intentionally share hardened components today, but never resolve to
+// the same AMI ID and can evolve independently as either runtime changes.
+resource "aws_imagebuilder_image_recipe" "software_builder_orchestrator" {
+  name         = "${var.project_name}-software-builder-orchestrator"
+  description  = "Ubuntu software-builder orchestrator image with Codex CLI and its isolated GitHub runner."
+  parent_image = data.aws_ami.ubuntu_2404.id
+  version      = var.software_builder_orchestrator_image_version
+
+  component {
+    component_arn = aws_imagebuilder_component.agent_core.arn
+  }
+
+  component {
+    component_arn = aws_imagebuilder_component.orchestrator_runtime.arn
+  }
+
+  block_device_mapping {
+    device_name = data.aws_ami.ubuntu_2404.root_device_name
+
+    ebs {
+      delete_on_termination = true
+      encrypted             = true
+      volume_size           = var.orchestrator_root_volume_size_gb
+      volume_type           = "gp3"
+    }
+  }
+
+  systems_manager_agent {
+    uninstall_after_build = false
+  }
+
+  ami_tags = {
+    Name     = "${var.project_name}-software-builder-orchestrator"
+    Role     = "orchestrator"
+    Workload = "software_builder"
+  }
+}
+
 resource "aws_imagebuilder_image_recipe" "subagent" {
   name         = "${var.project_name}-subagent"
   description  = "Ubuntu subagent image with Codex CLI, DuckDB, Playwright, and Chromium."
@@ -546,6 +585,20 @@ resource "aws_imagebuilder_image" "orchestrator" {
   }
 }
 
+resource "aws_imagebuilder_image" "software_builder_orchestrator" {
+  image_recipe_arn                 = aws_imagebuilder_image_recipe.software_builder_orchestrator.arn
+  infrastructure_configuration_arn = aws_imagebuilder_infrastructure_configuration.agents.arn
+
+  image_tests_configuration {
+    image_tests_enabled = true
+    timeout_minutes     = 60
+  }
+
+  timeouts {
+    create = "90m"
+  }
+}
+
 resource "aws_imagebuilder_image" "subagent" {
   image_recipe_arn                 = aws_imagebuilder_image_recipe.subagent.arn
   infrastructure_configuration_arn = aws_imagebuilder_infrastructure_configuration.agents.arn
@@ -561,6 +614,7 @@ resource "aws_imagebuilder_image" "subagent" {
 }
 
 locals {
-  orchestrator_ami_id = one(aws_imagebuilder_image.orchestrator.output_resources[0].amis).image
-  subagent_ami_id     = one(aws_imagebuilder_image.subagent.output_resources[0].amis).image
+  orchestrator_ami_id                  = one(aws_imagebuilder_image.orchestrator.output_resources[0].amis).image
+  software_builder_orchestrator_ami_id = one(aws_imagebuilder_image.software_builder_orchestrator.output_resources[0].amis).image
+  subagent_ami_id                      = one(aws_imagebuilder_image.subagent.output_resources[0].amis).image
 }

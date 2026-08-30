@@ -15,6 +15,11 @@ import {
 import { NextResponse } from "next/server";
 
 import { awsClientOptions } from "@/lib/aws";
+import {
+  getOrganizationRepository,
+  GitHubApiError,
+  GitHubConfigurationError,
+} from "@/lib/github-repositories";
 import type { Job, JobStatus, JobType, JobsSnapshot } from "@/lib/jobs";
 import { DEFAULT_JOB_TYPE, isJobType, JOB_ID_PATTERN } from "@/lib/jobs";
 
@@ -37,6 +42,7 @@ const ANCHOR_FILE_TYPES = {
 type AnchorFileExtension = keyof typeof ANCHOR_FILE_TYPES;
 
 type LaunchJobRequest = {
+  githubRepositoryId?: unknown;
   jobId?: unknown;
   originalTask?: unknown;
   typeOfJob?: unknown;
@@ -74,16 +80,35 @@ function errorResponse(error: string, status: number) {
 function configuration() {
   const jobsTable = process.env.JOBS_TABLE_NAME;
   const launchTemplateId = process.env.ORCHESTRATOR_LAUNCH_TEMPLATE_ID;
-  if (!jobsTable || !launchTemplateId) {
+  const softwareBuilderLaunchTemplateId =
+    process.env.SOFTWARE_BUILDER_ORCHESTRATOR_LAUNCH_TEMPLATE_ID;
+  const repositoryAssignmentsTable =
+    process.env.GITHUB_REPOSITORY_ASSIGNMENTS_TABLE_NAME;
+  const workspaceBucket = process.env.AGENT_WORKSPACE_BUCKET_NAME;
+  if (
+    !jobsTable ||
+    !launchTemplateId ||
+    !softwareBuilderLaunchTemplateId ||
+    !repositoryAssignmentsTable ||
+    !workspaceBucket
+  ) {
     return null;
   }
   return {
     jobsTable,
     launchTemplateId,
     launchTemplateVersion: process.env.ORCHESTRATOR_LAUNCH_TEMPLATE_VERSION || "$Default",
-    workspaceBucket: process.env.AGENT_WORKSPACE_BUCKET_NAME,
+    softwareBuilderLaunchTemplateId,
+    softwareBuilderLaunchTemplateVersion:
+      process.env.SOFTWARE_BUILDER_ORCHESTRATOR_LAUNCH_TEMPLATE_VERSION || "$Default",
+    repositoryAssignmentsTable,
+    workspaceBucket,
     region: process.env.AWS_REGION,
   };
+}
+
+function configurationError() {
+  return "The admin server is missing a jobs table, repository assignments table, workspace bucket, or orchestrator launch template setting.";
 }
 
 function anchorFileExtension(name: string): AnchorFileExtension | null {
@@ -100,6 +125,7 @@ async function parseLaunchRequest(request: Request): Promise<ParsedLaunchJobRequ
     const form = await request.formData();
     const candidate = form.get("anchorFile");
     return {
+      githubRepositoryId: form.get("githubRepositoryId"),
       jobId: form.get("jobId"),
       originalTask: form.get("originalTask"),
       typeOfJob: form.get("typeOfJob"),
@@ -249,7 +275,7 @@ export async function GET() {
   const config = configuration();
   if (!config) {
     return errorResponse(
-      "The admin server is missing JOBS_TABLE_NAME or ORCHESTRATOR_LAUNCH_TEMPLATE_ID.",
+      configurationError(),
       503,
     );
   }
@@ -287,7 +313,7 @@ export async function POST(request: Request) {
   const config = configuration();
   if (!config) {
     return errorResponse(
-      "The admin server is missing JOBS_TABLE_NAME or ORCHESTRATOR_LAUNCH_TEMPLATE_ID.",
+      configurationError(),
       503,
     );
   }
@@ -321,14 +347,52 @@ export async function POST(request: Request) {
     return errorResponse("typeOfJob is not supported.", 400);
   }
   const typeOfJob: JobType = requestedJobType;
-  let anchorUpload: Awaited<ReturnType<typeof validatedAnchorUpload>> | null = null;
-  if (input.anchorFile) {
-    if (!config.workspaceBucket) {
+  if (typeOfJob === "data_mining" && input.githubRepositoryId !== undefined) {
+    return errorResponse(
+      "githubRepositoryId is only valid for software-builder jobs.",
+      400,
+    );
+  }
+  if (typeOfJob === "software_builder" && input.anchorFile) {
+    return errorResponse("Software-builder jobs do not accept anchor files.", 400);
+  }
+
+  let githubRepository: Awaited<ReturnType<typeof getOrganizationRepository>> | null = null;
+  if (typeOfJob === "software_builder") {
+    if (
+      typeof input.githubRepositoryId !== "number" ||
+      !Number.isSafeInteger(input.githubRepositoryId) ||
+      input.githubRepositoryId <= 0
+    ) {
       return errorResponse(
-        "The admin server is missing AGENT_WORKSPACE_BUCKET_NAME for anchor-file uploads.",
-        503,
+        "A valid githubRepositoryId is required for software-builder jobs.",
+        400,
       );
     }
+    try {
+      githubRepository = await getOrganizationRepository(input.githubRepositoryId);
+    } catch (error) {
+      console.error("Software-builder repository validation failed", error);
+      if (error instanceof GitHubConfigurationError) {
+        return errorResponse(error.message, 503);
+      }
+      if (error instanceof GitHubApiError && error.upstreamStatus === 404) {
+        return errorResponse(
+          "The selected GitHub repository is unavailable to the provisioning App.",
+          404,
+        );
+      }
+      return errorResponse(
+        error instanceof Error
+          ? `The selected GitHub repository could not be validated: ${error.message}`
+          : "The selected GitHub repository could not be validated.",
+        502,
+      );
+    }
+  }
+
+  let anchorUpload: Awaited<ReturnType<typeof validatedAnchorUpload>> | null = null;
+  if (input.anchorFile) {
     try {
       anchorUpload = await validatedAnchorUpload(input.anchorFile);
     } catch (error) {
@@ -343,8 +407,8 @@ export async function POST(request: Request) {
   const anchorKey = `jobs/${jobId}/input/anchor-data`;
 
   try {
-    // Claim the lock and create the job record together. The lock write fails if
-    // another job is active; the job write fails if this job_id already exists.
+    // Claim the lock, create the job, and (for software jobs) bind the trusted
+    // repository together. EC2 cannot launch from a partially committed setup.
     await documents.send(
       new TransactWriteCommand({
         ClientRequestToken: jobId,
@@ -382,6 +446,22 @@ export async function POST(request: Request) {
               ConditionExpression: "attribute_not_exists(pk)",
             },
           },
+          ...(githubRepository
+            ? [
+                {
+                  Put: {
+                    TableName: config.repositoryAssignmentsTable,
+                    Item: {
+                      job_id: jobId,
+                      github_repository_id: githubRepository.id,
+                      github_repository_full_name: githubRepository.fullName,
+                      created_at: createdAt,
+                    },
+                    ConditionExpression: "attribute_not_exists(job_id)",
+                  },
+                },
+              ]
+            : []),
         ],
       }),
     );
@@ -443,8 +523,14 @@ export async function POST(request: Request) {
     const response = await ec2.send(
       new RunInstancesCommand({
         LaunchTemplate: {
-          LaunchTemplateId: config.launchTemplateId,
-          Version: config.launchTemplateVersion,
+          LaunchTemplateId:
+            typeOfJob === "software_builder"
+              ? config.softwareBuilderLaunchTemplateId
+              : config.launchTemplateId,
+          Version:
+            typeOfJob === "software_builder"
+              ? config.softwareBuilderLaunchTemplateVersion
+              : config.launchTemplateVersion,
         },
         MinCount: 1,
         MaxCount: 1,
@@ -455,6 +541,7 @@ export async function POST(request: Request) {
             Tags: [
               { Key: "Name", Value: `orchestrator-${jobId}` },
               { Key: "Role", Value: "orchestrator" },
+              { Key: "Workload", Value: typeOfJob },
               { Key: "JobId", Value: jobId },
               { Key: "TypeOfJob", Value: typeOfJob },
             ],
@@ -463,6 +550,7 @@ export async function POST(request: Request) {
             ResourceType: "volume",
             Tags: [
               { Key: "Role", Value: "orchestrator" },
+              { Key: "Workload", Value: typeOfJob },
               { Key: "JobId", Value: jobId },
               { Key: "TypeOfJob", Value: typeOfJob },
             ],
@@ -526,7 +614,7 @@ export async function DELETE(request: Request) {
   const config = configuration();
   if (!config) {
     return errorResponse(
-      "The admin server is missing JOBS_TABLE_NAME or ORCHESTRATOR_LAUNCH_TEMPLATE_ID.",
+      configurationError(),
       503,
     );
   }

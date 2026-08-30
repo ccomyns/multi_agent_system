@@ -3,9 +3,10 @@
 An early-stage system for coordinating EC2-based financial research agents. The
 current implementation contains:
 
-- Prebaked Ubuntu 24.04 AMIs for orchestrators and browser-enabled subagents.
-- On-demand `t3.large` orchestrator launch templates; Terraform does not create
-  a persistent orchestrator instance.
+- Independently built Ubuntu 24.04 AMIs for data-mining orchestrators,
+  software-builder orchestrators, and browser-enabled subagents.
+- Separate on-demand `t3.large` launch templates for data-mining and
+  software-builder orchestrators; Terraform creates no persistent orchestrator.
 - A Lambda function that launches subagent EC2 instances.
 - A dedicated S3-triggered Lambda that terminates a subagent only after its
   trusted runner publishes durable terminal artifacts.
@@ -106,10 +107,12 @@ Jobs live in a second table, `<project>-jobs`, which holds two kinds of items:
 one job record per run (`pk = JOB#<job_id>`) and a single lock item
 (`pk = ACTIVE_JOB`). The lock's `active_job_id` references the active job
 record's `pk`. The browser mints the `job_id` and posts it to the admin server,
-which issues one transaction containing two conditional writes: the lock write
-succeeds only if no lock exists, and the job write succeeds only if that
-`job_id` has never been used. Only when the transaction commits does the admin
-server call `ec2:RunInstances`; the returned instance ID is stored as
+which issues one transaction containing conditional lock and job writes. A
+software-builder transaction also writes its immutable trusted repository
+assignment in that transaction. The lock succeeds only if no job is active,
+and the job write succeeds only if that `job_id` has never been used. Only when
+the transaction commits does the admin server call `ec2:RunInstances`; the
+returned instance ID is stored as
 `orchestrator_instance_id` and also serves as the join key into the subagent
 state table. A job's `status` is `initializing`, `running`, `completed`, or
 `failed`. Ending a job terminates its orchestrator and
@@ -119,8 +122,8 @@ owns it.
 Terraform builds the launch templates and AMIs but launches no runtime
 orchestrator or subagent. EC2 Image Builder temporarily launches build/test
 instances while creating each AMI and terminates those workers after the build.
-The admin backend launches one orchestrator from the normal launch template for
-each run and terminates it when the run is complete.
+The admin backend chooses the data-mining or software-builder launch template
+from the validated job type and terminates the instance when the run is complete.
 
 ## Repository
 
@@ -197,7 +200,10 @@ still completes normally and is displayed in a formatted JSON fallback view.
 
 To launch real jobs, copy `admin/.env.example` to `admin/.env.local` and set
 `JOBS_TABLE_NAME`, `ORCHESTRATOR_LAUNCH_TEMPLATE_ID`,
-`ORCHESTRATOR_LAUNCH_TEMPLATE_VERSION`, and `AWS_REGION`
+`ORCHESTRATOR_LAUNCH_TEMPLATE_VERSION`,
+`SOFTWARE_BUILDER_ORCHESTRATOR_LAUNCH_TEMPLATE_ID`,
+`SOFTWARE_BUILDER_ORCHESTRATOR_LAUNCH_TEMPLATE_VERSION`,
+`GITHUB_REPOSITORY_ASSIGNMENTS_TABLE_NAME`, and `AWS_REGION`
 from the Terraform outputs. Launching a job starts a billable `t3.large`
 orchestrator that runs until the job is ended from the console.
 
@@ -283,8 +289,8 @@ aws ssm describe-parameters \
     "Key=Name,Option=Equals,Values=$(terraform output -raw github_writer_private_key_ssm_parameter_name)"
 ```
 
-The future software-builder submit API must atomically create the job and an
-immutable item in the `github_repository_assignments_table_name` output with
+The software-builder submit API atomically creates the job and an immutable
+item in the `github_repository_assignments_table_name` output with
 `job_id`, GitHub's numeric `github_repository_id`, and
 `github_repository_full_name`. The broker accepts only `job_id` and
 `orchestrator_instance_id`; it obtains repository scope from that trusted
@@ -327,9 +333,11 @@ terraform apply tfplan
 Do not run `apply` until the plan, AWS account, region, permissions, and
 estimated cost have been reviewed.
 
-Applying this configuration builds two AMIs:
+Applying this configuration builds three AMIs:
 
-- Orchestrator: Codex CLI, DuckDB CLI, and the multi-agent runtime.
+- Data-mining orchestrator: Codex CLI, DuckDB CLI, and the multi-agent runtime.
+- Software-builder orchestrator: an independently versioned AMI containing the
+  isolated GitHub software-builder runtime.
 - Subagent: Codex CLI, DuckDB CLI, Playwright, Chromium, and the S3-delivered
   task runner.
 
@@ -339,18 +347,19 @@ subagents per orchestrator. Subagents self-terminate after
 system supported by Playwright.
 
 The install components request current software releases at image-build time.
-An existing AMI does not update itself. Orchestrator and subagent image versions
-are separate so one can be rebuilt without unnecessarily rebuilding the other.
+An existing AMI does not update itself. Orchestrator workload and subagent image
+versions are separate so one can be rebuilt without unnecessarily rebuilding
+the others.
 The current versions are:
 
 ```hcl
 orchestrator_image_version = "1.1.3"
-agent_image_version        = "1.1.1"
+software_builder_orchestrator_image_version = "1.0.0"
+agent_image_version = "1.1.1"
 ```
 
-Increment `orchestrator_image_version` for orchestrator runtime or recipe
-changes. Increment `agent_image_version` when shared agent tools or the
-subagent image change.
+Increment the matching orchestrator version for its recipe changes. Increment
+`agent_image_version` when shared agent tools or the subagent image change.
 
 The AMI build creates temporary EC2 instances and persistent EBS-backed AMIs,
 so it takes longer and costs more than a configuration-only Terraform apply.

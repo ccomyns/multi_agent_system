@@ -1,8 +1,8 @@
 export type JobStatus = "initializing" | "running" | "completed" | "failed";
-export type JobType = "data_mining";
+export type JobType = "data_mining" | "software_builder";
 
 export const DEFAULT_JOB_TYPE: JobType = "data_mining";
-export const JOB_TYPES: JobType[] = [DEFAULT_JOB_TYPE];
+export const JOB_TYPES: JobType[] = [DEFAULT_JOB_TYPE, "software_builder"];
 
 export function isJobType(value: unknown): value is JobType {
   return JOB_TYPES.includes(value as JobType);
@@ -12,6 +12,8 @@ export function jobTypeLabel(type: JobType) {
   switch (type) {
     case "data_mining":
       return "Data Mining";
+    case "software_builder":
+      return "Software Builder";
   }
 }
 
@@ -19,6 +21,8 @@ export function jobDetailHref(job: Pick<Job, "jobId" | "typeOfJob">) {
   switch (job.typeOfJob) {
     case "data_mining":
       return `/jobs/${encodeURIComponent(job.jobId)}`;
+    case "software_builder":
+      return "/software";
   }
 }
 
@@ -115,6 +119,7 @@ export async function requestJobLaunch(
   originalTask: string,
   typeOfJob: JobType,
   anchorFile?: File | null,
+  githubRepositoryId?: number,
 ): Promise<Job> {
   let request: RequestInit;
   if (anchorFile) {
@@ -128,7 +133,12 @@ export async function requestJobLaunch(
     request = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobId: createJobId(), originalTask, typeOfJob }),
+      body: JSON.stringify({
+        jobId: createJobId(),
+        originalTask,
+        typeOfJob,
+        githubRepositoryId,
+      }),
     };
   }
 
