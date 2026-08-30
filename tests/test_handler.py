@@ -164,9 +164,16 @@ class SpawnTests(unittest.TestCase):
                     "AGENT_WORKSPACE_BUCKET_NAME": "agent-workspace-bucket",
                     "GLOBAL_MEMORY_BUCKET_NAME": "global-memory-bucket",
                     "CODEX_AUTH_SSM_PARAMETER_NAME": "/project/codex/auth-json",
+                    "RUNTIME_ARTIFACT_BUCKET": "runtime-artifact-bucket",
+                    "RUNTIME_ARTIFACT_BUCKET_OWNER": "123456789012",
                     "SUBAGENT_AMI_ID": "ami-browser-tools",
                     "SUBAGENT_INSTANCE_PROFILE_NAME": "subagent-profile",
                     "SUBAGENT_INSTANCE_TYPE": "t3.large",
+                    "SUBAGENT_RUNTIME_NAME": "subagent-data-mining",
+                    "SUBAGENT_RUNTIME_S3_KEY": (
+                        "system/runtime/subagent-data-mining/hash/runtime.zip"
+                    ),
+                    "SUBAGENT_RUNTIME_SHA256": "a" * 64,
                     "SUBAGENT_SECURITY_GROUP_ID": "sg-subagents",
                     "SUBAGENT_SUBNET_ID": "subnet-public",
                     "SUBAGENT_TTL_SECONDS": "1800",
@@ -185,6 +192,9 @@ class SpawnTests(unittest.TestCase):
         self.assertEqual(ec2.run_instances.call_args.kwargs["InstanceType"], "t3.large")
         self.assertNotIn("BlockDeviceMappings", ec2.run_instances.call_args.kwargs)
         self.assertIn("TASK_S3_KEY=" + handoff["task_s3_key"], user_data)
+        self.assertIn("RUNTIME_ARTIFACT_BUCKET=runtime-artifact-bucket", user_data)
+        self.assertIn("SUBAGENT_RUNTIME_NAME=subagent-data-mining", user_data)
+        self.assertIn("SUBAGENT_RUNTIME_SHA256=" + "a" * 64, user_data)
         self.assertIn("systemctl start --no-block multi-agent-subagent.service", user_data)
         self.assertIn("BOOTSTRAP_LOG_PATH=/var/log/multi-agent/subagent-bootstrap.log", user_data)
         self.assertIn("CODEX_LOG_PATH=/var/log/multi-agent/subagent-codex.log", user_data)

@@ -64,6 +64,8 @@ infra/subagent-manager.zip
 infra/subagent-terminator.zip
 infra/github-token-broker.zip
 infra/orchestrator-runtime.zip
+infra/data-mining-orchestrator-runtime.zip
+infra/software-builder-runtime.zip
 infra/subagent-runtime.zip
 
 # General local output

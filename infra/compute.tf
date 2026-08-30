@@ -48,8 +48,6 @@ locals {
     CODEX_AUTH_SSM_PARAMETER_NAME=${local.codex_auth_ssm_parameter_name}
     ORCHESTRATOR_MODEL=${var.orchestrator_model}
     SUBAGENT_MODEL=${var.subagent_model}
-    SPAWN_AGENT_MCP_COMMAND=${var.spawn_agent_mcp_command}
-    ORCHESTRATOR_DOCUMENTATION_DIR=/opt/multi-agent/runtime/docs
     BOOTSTRAP_LOG_PATH=/var/log/multi-agent/orchestrator-bootstrap.log
     CODEX_LOG_PATH=/var/log/multi-agent/orchestrator-codex.log
     SOFTWARE_BUILDER_CODEX_LOG_PATH=/var/log/multi-agent/orchestrator-software-codex.log
@@ -60,6 +58,28 @@ locals {
 
   orchestrator_bootstrap = <<-EOT
     ${local.orchestrator_environment_bootstrap}
+
+    cat >> /etc/multi-agent/orchestrator.env <<ENV
+    RUNTIME_ARTIFACT_BUCKET=${aws_s3_bucket.agent_workspace.id}
+    RUNTIME_ARTIFACT_BUCKET_OWNER=${data.aws_caller_identity.current.account_id}
+    ORCHESTRATOR_RUNTIME_NAME=data-mining
+    ORCHESTRATOR_RUNTIME_S3_KEY=${aws_s3_object.data_mining_orchestrator_runtime.key}
+    ORCHESTRATOR_RUNTIME_SHA256=${data.archive_file.data_mining_orchestrator_runtime.output_sha256}
+    ENV
+
+    systemctl start --no-block multi-agent-orchestrator.service
+  EOT
+
+  software_builder_orchestrator_bootstrap = <<-EOT
+    ${local.orchestrator_environment_bootstrap}
+
+    cat >> /etc/multi-agent/orchestrator.env <<ENV
+    RUNTIME_ARTIFACT_BUCKET=${aws_s3_bucket.agent_workspace.id}
+    RUNTIME_ARTIFACT_BUCKET_OWNER=${data.aws_caller_identity.current.account_id}
+    ORCHESTRATOR_RUNTIME_NAME=software-builder
+    ORCHESTRATOR_RUNTIME_S3_KEY=${aws_s3_object.software_builder_runtime.key}
+    ORCHESTRATOR_RUNTIME_SHA256=${data.archive_file.software_builder_runtime.output_sha256}
+    ENV
 
     systemctl start --no-block multi-agent-orchestrator.service
   EOT
@@ -165,7 +185,7 @@ resource "aws_launch_template" "software_builder_orchestrator" {
     }
   }
 
-  user_data = base64encode(local.orchestrator_bootstrap)
+  user_data = base64encode(local.software_builder_orchestrator_bootstrap)
 
   tag_specifications {
     resource_type = "instance"

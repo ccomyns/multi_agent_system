@@ -33,7 +33,7 @@ class SubagentTerminationInfrastructureTests(unittest.TestCase):
             "variable ", 1
         )[0]
 
-        self.assertIn('default     = "1.1.3"', agent_block)
+        self.assertIn('default     = "1.1.5"', agent_block)
 
     def test_agent_core_runs_duckdb_installer_with_bash(self) -> None:
         images_tf = (INFRA_ROOT / "images.tf").read_text(encoding="utf-8")

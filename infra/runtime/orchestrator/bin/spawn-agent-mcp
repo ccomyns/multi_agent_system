@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
+runtime_bin_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 exec /opt/multi-agent/venv/bin/python \
-  /opt/multi-agent/runtime/bin/spawn_agent_mcp.py
+  "$runtime_bin_dir/spawn_agent_mcp.py"

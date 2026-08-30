@@ -46,10 +46,15 @@ def load_module(name: str, filename: str, bin_dir: Path):
     return module
 
 
-entrypoint_module = load_module(
-    "orchestrator_entrypoint",
+data_mining_entrypoint_module = load_module(
+    "data_mining_orchestrator_entrypoint",
     "orchestrator_entrypoint.py",
     ORCHESTRATOR_BIN_DIR,
+)
+software_builder_entrypoint_module = load_module(
+    "software_builder_orchestrator_entrypoint",
+    "orchestrator_entrypoint.py",
+    SOFTWARE_BUILDER_BIN_DIR,
 )
 credentials_module = load_module(
     "software_github_credentials",
@@ -94,18 +99,109 @@ class SoftwareRunnerSeparationTests(unittest.TestCase):
             "image_id               = local.software_builder_orchestrator_ami_id",
             compute,
         )
+        software_recipe = images.split(
+            'resource "aws_imagebuilder_image_recipe" "software_builder_orchestrator"',
+            1,
+        )[1].split('resource "aws_imagebuilder_image_recipe" "subagent"', 1)[0]
+        self.assertIn(
+            "aws_imagebuilder_component.software_builder_base_runtime.arn",
+            software_recipe,
+        )
+        self.assertNotIn(
+            "aws_imagebuilder_component.data_mining_orchestrator_base_runtime.arn",
+            software_recipe,
+        )
 
-    def test_dispatcher_maps_each_job_type_to_a_distinct_runner(self) -> None:
+    def test_all_runtimes_are_hash_pinned_and_installed_at_launch(self) -> None:
+        infra = Path(__file__).resolve().parents[1]
+        artifacts = (infra / "artifacts.tf").read_text(encoding="utf-8")
+        compute = (infra / "compute.tf").read_text(encoding="utf-8")
+        iam = (infra / "iam.tf").read_text(encoding="utf-8")
+        images = (infra / "images.tf").read_text(encoding="utf-8")
+
+        self.assertIn("system/runtime/orchestrator-data-mining/", artifacts)
+        self.assertIn("system/runtime/software-builder/", artifacts)
+        self.assertIn("system/runtime/subagent-data-mining/", artifacts)
+        self.assertEqual(compute.count("ORCHESTRATOR_RUNTIME_S3_KEY="), 2)
+        self.assertEqual(compute.count("ORCHESTRATOR_RUNTIME_SHA256="), 2)
+        self.assertNotIn("SOFTWARE_BUILDER_RUNTIME_S3_KEY=", compute)
+        self.assertIn(
+            "user_data = base64encode(local.software_builder_orchestrator_bootstrap)",
+            compute,
+        )
+        orchestrator_policy = iam.split(
+            'resource "aws_iam_role_policy" "orchestrator"', 1
+        )[1].split('resource "aws_iam_role" "image_builder"', 1)[0]
+        subagent_policy = iam.split(
+            'resource "aws_iam_role_policy" "subagent"', 1
+        )[1].split('resource "aws_iam_role" "orchestrator"', 1)[0]
+        self.assertIn("ReadIsolatedOrchestratorRuntimes", orchestrator_policy)
+        self.assertIn("system/runtime/orchestrator-data-mining/*", orchestrator_policy)
+        self.assertIn("system/runtime/software-builder/*", orchestrator_policy)
+        self.assertIn("ReadDataMiningSubagentRuntime", subagent_policy)
+        self.assertIn("system/runtime/subagent-data-mining/*", subagent_policy)
+        self.assertIn(
+            "ExecStart=/usr/local/bin/run-runtime-orchestrator",
+            images,
+        )
+        data_mining_component = images.split(
+            'resource "aws_imagebuilder_component" "data_mining_orchestrator_base_runtime"',
+            1,
+        )[1].split(
+            'resource "aws_imagebuilder_component" "software_builder_base_runtime"',
+            1,
+        )[0]
+        self.assertNotIn("software_builder_runtime", data_mining_component)
+        self.assertNotIn("aws_s3_object", data_mining_component)
+
+        software_component = images.split(
+            'resource "aws_imagebuilder_component" "software_builder_base_runtime"',
+            1,
+        )[1].split(
+            'resource "aws_imagebuilder_component" "subagent_browser_tools"',
+            1,
+        )[0]
+        self.assertNotIn("data_mining_orchestrator_runtime", software_component)
+        self.assertNotIn("aws_s3_object", software_component)
+
+        subagent_component = images.split(
+            'resource "aws_imagebuilder_component" "data_mining_subagent_base_runtime"',
+            1,
+        )[1].split('resource "aws_imagebuilder_image_recipe" "orchestrator"', 1)[0]
+        self.assertNotIn("aws_s3_object", subagent_component)
+        self.assertNotIn('action = "S3Download"', images)
+
+        lambda_tf = (infra / "lambda.tf").read_text(encoding="utf-8")
+        manager_source = (
+            infra.parent / "src" / "subagent_manager" / "handler.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("SUBAGENT_RUNTIME_S3_KEY", lambda_tf)
+        self.assertIn("SUBAGENT_RUNTIME_SHA256", lambda_tf)
+        self.assertIn("SUBAGENT_RUNTIME_S3_KEY=", manager_source)
+        self.assertIn("SUBAGENT_RUNTIME_SHA256=", manager_source)
+
+    def test_dispatchers_reject_the_other_runtime_job_type(self) -> None:
         self.assertEqual(
-            entrypoint_module.runner_path("data_mining", ORCHESTRATOR_BIN_DIR).name,
+            data_mining_entrypoint_module.runner_path(
+                "data_mining", ORCHESTRATOR_BIN_DIR
+            ).name,
             "orchestrator_runner.py",
         )
+        with self.assertRaisesRegex(RuntimeError, "unsupported TYPE_OF_JOB"):
+            data_mining_entrypoint_module.runner_path(
+                "software_builder", ORCHESTRATOR_BIN_DIR
+            )
+
         self.assertEqual(
-            entrypoint_module.runner_path("software_builder", ORCHESTRATOR_BIN_DIR).name,
+            software_builder_entrypoint_module.runner_path(
+                "software_builder", SOFTWARE_BUILDER_BIN_DIR
+            ).name,
             "orchestrator_software_runner.py",
         )
         with self.assertRaisesRegex(RuntimeError, "unsupported TYPE_OF_JOB"):
-            entrypoint_module.runner_path("unknown", ORCHESTRATOR_BIN_DIR)
+            software_builder_entrypoint_module.runner_path(
+                "data_mining", SOFTWARE_BUILDER_BIN_DIR
+            )
 
     def test_software_runner_has_no_data_mining_or_subagent_runtime_dependency(self) -> None:
         source = (SOFTWARE_BUILDER_BIN_DIR / "orchestrator_software_runner.py").read_text(
@@ -122,16 +218,11 @@ class SoftwareRunnerSeparationTests(unittest.TestCase):
         images = (infra / "images.tf").read_text(encoding="utf-8")
         compute = (infra / "compute.tf").read_text(encoding="utf-8")
 
-        self.assertIn(
-            "ExecStart=/opt/multi-agent/venv/bin/python "
-            "/opt/multi-agent/runtime/bin/orchestrator_entrypoint.py",
-            images,
+        self.assertEqual(
+            images.count("ExecStart=/usr/local/bin/run-runtime-orchestrator"), 2
         )
-        self.assertNotIn(
-            "ExecStart=/opt/multi-agent/venv/bin/python "
-            "/opt/multi-agent/runtime/bin/orchestrator_runner.py",
-            images,
-        )
+        self.assertIn("ExecStart=/usr/local/bin/run-runtime-subagent", images)
+        self.assertNotIn("/opt/multi-agent/runtime/bin/", images)
         self.assertIn("meta-data/tags/instance/TypeOfJob", compute)
         self.assertIn("TYPE_OF_JOB=$type_of_job", compute)
         self.assertIn("apt-get install -y git", images)
@@ -178,6 +269,54 @@ class SoftwareGitHubCredentialTests(unittest.TestCase):
         )
         self.assertEqual(credentials.repository_full_name, "mas-workspace/empty-repo")
         self.assertEqual(credentials.repository_id, 123456)
+
+    def test_broker_accepts_stateless_github_installation_tokens(self) -> None:
+        # GitHub's 2026 stateless format is ghs_APPID_JWT. JWT base64url
+        # segments contain periods and may contain hyphens and underscores.
+        token = (
+            "ghs_123456_"
+            "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9."
+            "eyJpc3MiOiIxMjM0NTYiLCJzdWIiOiJpbnN0YWxsYXRpb24ifQ."
+            "signature-with_url-safe-characters"
+        )
+        client = Mock()
+        client.invoke.return_value = {
+            "Payload": io.BytesIO(
+                json.dumps(self.broker_response(token=token)).encode("utf-8")
+            )
+        }
+
+        credentials = credentials_module.request_repository_credentials(
+            region="us-east-1",
+            function_name="github-token-broker",
+            job_id="job_abc1_1234abcd",
+            orchestrator_instance_id="i-1234567890abcdef0",
+            lambda_client=client,
+        )
+
+        self.assertEqual(credentials.token, token)
+
+    def test_broker_rejects_non_installation_and_line_break_tokens(self) -> None:
+        for token in (
+            "ghp_" + "a" * 36,
+            "ghs_" + "a" * 15,
+            "ghs_" + "a" * 20 + "\npassword=attacker-controlled",
+        ):
+            with self.subTest(token_type=token[:4], token_length=len(token)):
+                client = Mock()
+                client.invoke.return_value = {
+                    "Payload": io.BytesIO(
+                        json.dumps(self.broker_response(token=token)).encode("utf-8")
+                    )
+                }
+                with self.assertRaisesRegex(RuntimeError, "invalid token"):
+                    credentials_module.request_repository_credentials(
+                        region="us-east-1",
+                        function_name="github-token-broker",
+                        job_id="job_abc1_1234abcd",
+                        orchestrator_instance_id="i-1234567890abcdef0",
+                        lambda_client=client,
+                    )
 
     def test_broker_response_must_remain_write_only_for_one_repository(self) -> None:
         response = self.broker_response(
@@ -397,6 +536,14 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
             command = popen.call_args.args[0]
             environment = popen.call_args.kwargs["env"]
             self.assertEqual(command[command.index("--cd") + 1], str(run.repository_root))
+            self.assertEqual(
+                command[command.index("--sandbox") + 1],
+                "danger-full-access",
+            )
+            self.assertEqual(
+                command[command.index("--ask-for-approval") + 1],
+                "never",
+            )
             self.assertNotIn("--skip-git-repo-check", command)
             self.assertEqual(environment["SOFTWARE_BUILDER_REPOSITORY_ROOT"], str(run.repository_root))
             self.assertEqual(
@@ -409,7 +556,10 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
             config = (run.codex_home / "config.toml").read_text(encoding="utf-8")
             self.assertIn("current working directory is exactly", config)
             self.assertIn("No subagent tools are configured", config)
-            self.assertIn("commit every intended change and push", config)
+            self.assertIn("git add and commit every intended change", config)
+            self.assertIn("push the current branch to origin", config)
+            self.assertIn("leave the working tree clean", config)
+            self.assertNotIn("[sandbox_workspace_write]", config)
             self.assertNotIn("[mcp_servers.", config)
 
     def test_completion_requires_a_clean_commit_present_on_origin(self) -> None:

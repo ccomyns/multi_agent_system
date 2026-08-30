@@ -355,8 +355,9 @@ developer_instructions = {toml_string(developer_instructions)}
             "remotes, request credentials, print credentials, or attempt to access any other "
             "repository. No subagent tools are configured for this runner. Inspect the existing "
             "project before editing, implement the user's task, and run the relevant tests. "
-            "Before finishing, commit every intended change and push the current branch to "
-            "origin. Leave the working tree clean."
+            "Before finishing, git add and commit every intended change, push the current branch "
+            "to origin, verify that the pushed commit is present on origin, and leave the working "
+            "tree clean."
         )
         self.telemetry.record(
             "codex_config_started",
@@ -375,7 +376,7 @@ developer_instructions = {toml_string(developer_instructions)}
             "--model",
             self.orchestrator_model,
             "--sandbox",
-            "workspace-write",
+            "danger-full-access",
             "--ephemeral",
             "--cd",
             str(self.repository_root),
