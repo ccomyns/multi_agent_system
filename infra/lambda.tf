@@ -29,6 +29,8 @@ resource "aws_lambda_function" "subagent_manager" {
       CODEX_AUTH_SSM_PARAMETER_NAME  = local.codex_auth_ssm_parameter_name
       GLOBAL_MEMORY_BUCKET_NAME      = aws_s3_bucket.global_memory.id
       MAX_ACTIVE_SUBAGENTS           = tostring(var.max_active_subagents)
+      RUNTIME_ARTIFACT_BUCKET        = aws_s3_bucket.agent_workspace.id
+      RUNTIME_ARTIFACT_BUCKET_OWNER  = data.aws_caller_identity.current.account_id
       STATE_TABLE_NAME               = aws_dynamodb_table.state.name
       SUBAGENT_AMI_ID                = local.subagent_ami_id
       SUBAGENT_INSTANCE_PROFILE_NAME = aws_iam_instance_profile.subagent.name
@@ -37,6 +39,9 @@ resource "aws_lambda_function" "subagent_manager" {
       SUBAGENT_SUBNET_ID             = aws_subnet.public.id
       SUBAGENT_TTL_SECONDS           = tostring(var.subagent_ttl_seconds)
       SUBAGENT_MODEL                 = var.subagent_model
+      SUBAGENT_RUNTIME_NAME          = "data-mining"
+      SUBAGENT_RUNTIME_S3_KEY        = aws_s3_object.subagent_runtime.key
+      SUBAGENT_RUNTIME_SHA256        = data.archive_file.subagent_runtime.output_sha256
     }
   }
 

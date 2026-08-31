@@ -261,6 +261,12 @@ resource "aws_iam_role_policy" "subagent" {
         Resource = "${aws_s3_bucket.agent_workspace.arn}/jobs/*"
       },
       {
+        Sid      = "ReadDataMiningSubagentRuntime"
+        Effect   = "Allow"
+        Action   = "s3:GetObject"
+        Resource = "${aws_s3_bucket.agent_workspace.arn}/system/runtime/subagent-data-mining/*"
+      },
+      {
         Sid      = "ListGlobalMemory"
         Effect   = "Allow"
         Action   = "s3:ListBucket"
@@ -364,6 +370,15 @@ resource "aws_iam_role_policy" "orchestrator" {
         Resource = "${aws_s3_bucket.agent_workspace.arn}/jobs/*"
       },
       {
+        Sid    = "ReadIsolatedOrchestratorRuntimes"
+        Effect = "Allow"
+        Action = "s3:GetObject"
+        Resource = [
+          "${aws_s3_bucket.agent_workspace.arn}/system/runtime/orchestrator-data-mining/*",
+          "${aws_s3_bucket.agent_workspace.arn}/system/runtime/software-builder/*"
+        ]
+      },
+      {
         Sid      = "ListGlobalMemory"
         Effect   = "Allow"
         Action   = "s3:ListBucket"
@@ -407,20 +422,6 @@ resource "aws_iam_role_policy_attachment" "image_builder" {
 resource "aws_iam_role_policy_attachment" "image_builder_ssm" {
   role       = aws_iam_role.image_builder.name
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
-resource "aws_iam_role_policy" "image_builder_artifacts" {
-  name = "read-image-build-artifacts"
-  role = aws_iam_role.image_builder.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = "s3:GetObject"
-      Resource = "${aws_s3_bucket.agent_workspace.arn}/system/image-build/*"
-    }]
-  })
 }
 
 // Long-lived identity behind the admin server. Its credentials never reach the

@@ -48,8 +48,6 @@ locals {
     CODEX_AUTH_SSM_PARAMETER_NAME=${local.codex_auth_ssm_parameter_name}
     ORCHESTRATOR_MODEL=${var.orchestrator_model}
     SUBAGENT_MODEL=${var.subagent_model}
-    SPAWN_AGENT_MCP_COMMAND=${var.spawn_agent_mcp_command}
-    ORCHESTRATOR_DOCUMENTATION_DIR=/opt/multi-agent/runtime/docs
     BOOTSTRAP_LOG_PATH=/var/log/multi-agent/orchestrator-bootstrap.log
     CODEX_LOG_PATH=/var/log/multi-agent/orchestrator-codex.log
     SOFTWARE_BUILDER_CODEX_LOG_PATH=/var/log/multi-agent/orchestrator-software-codex.log
@@ -60,6 +58,28 @@ locals {
 
   orchestrator_bootstrap = <<-EOT
     ${local.orchestrator_environment_bootstrap}
+
+    cat >> /etc/multi-agent/orchestrator.env <<ENV
+    RUNTIME_ARTIFACT_BUCKET=${aws_s3_bucket.agent_workspace.id}
+    RUNTIME_ARTIFACT_BUCKET_OWNER=${data.aws_caller_identity.current.account_id}
+    ORCHESTRATOR_RUNTIME_NAME=data-mining
+    ORCHESTRATOR_RUNTIME_S3_KEY=${aws_s3_object.data_mining_orchestrator_runtime.key}
+    ORCHESTRATOR_RUNTIME_SHA256=${data.archive_file.data_mining_orchestrator_runtime.output_sha256}
+    ENV
+
+    systemctl start --no-block multi-agent-orchestrator.service
+  EOT
+
+  software_builder_orchestrator_bootstrap = <<-EOT
+    ${local.orchestrator_environment_bootstrap}
+
+    cat >> /etc/multi-agent/orchestrator.env <<ENV
+    RUNTIME_ARTIFACT_BUCKET=${aws_s3_bucket.agent_workspace.id}
+    RUNTIME_ARTIFACT_BUCKET_OWNER=${data.aws_caller_identity.current.account_id}
+    ORCHESTRATOR_RUNTIME_NAME=software-builder
+    ORCHESTRATOR_RUNTIME_S3_KEY=${aws_s3_object.software_builder_runtime.key}
+    ORCHESTRATOR_RUNTIME_SHA256=${data.archive_file.software_builder_runtime.output_sha256}
+    ENV
 
     systemctl start --no-block multi-agent-orchestrator.service
   EOT
@@ -121,6 +141,68 @@ resource "aws_launch_template" "orchestrator" {
 
     tags = {
       Role = "orchestrator"
+    }
+  }
+}
+
+resource "aws_launch_template" "software_builder_orchestrator" {
+  name_prefix            = "${var.project_name}-software-builder-orchestrator-"
+  description            = "On-demand orchestrator for software-builder runs."
+  image_id               = local.software_builder_orchestrator_ami_id
+  instance_type          = var.orchestrator_instance_type
+  update_default_version = true
+
+  instance_initiated_shutdown_behavior = "terminate"
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.orchestrator.name
+  }
+
+  network_interfaces {
+    associate_public_ip_address = true
+    delete_on_termination       = true
+    device_index                = 0
+    security_groups             = [aws_security_group.instances.id]
+    subnet_id                   = aws_subnet.public.id
+  }
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_protocol_ipv6          = "disabled"
+    http_put_response_hop_limit = 1
+    http_tokens                 = "required"
+    instance_metadata_tags      = "enabled"
+  }
+
+  block_device_mappings {
+    device_name = data.aws_ami.ubuntu_2404.root_device_name
+
+    ebs {
+      delete_on_termination = true
+      encrypted             = true
+      volume_size           = var.orchestrator_root_volume_size_gb
+      volume_type           = "gp3"
+    }
+  }
+
+  user_data = base64encode(local.software_builder_orchestrator_bootstrap)
+
+  tag_specifications {
+    resource_type = "instance"
+
+    tags = {
+      Name     = "${var.project_name}-software-builder-orchestrator"
+      Role     = "orchestrator"
+      Workload = "software_builder"
+    }
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+
+    tags = {
+      Role     = "orchestrator"
+      Workload = "software_builder"
     }
   }
 }

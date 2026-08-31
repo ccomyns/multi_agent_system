@@ -12,7 +12,6 @@ from pathlib import Path
 LOG = logging.getLogger("orchestrator-entrypoint")
 RUNNER_FILENAMES = {
     "data_mining": "orchestrator_runner.py",
-    "software_builder": "orchestrator_software_runner.py",
 }
 
 
@@ -38,6 +37,11 @@ def main() -> int:
         LOG.error("orchestrator runner is missing: %s", selected_runner)
         return 2
 
+    runtime_root = Path(__file__).resolve().parents[1]
+    os.environ["SPAWN_AGENT_MCP_COMMAND"] = str(
+        runtime_root / "bin" / "spawn-agent-mcp"
+    )
+    os.environ["ORCHESTRATOR_DOCUMENTATION_DIR"] = str(runtime_root / "docs")
     LOG.info("starting %s orchestrator runner", job_type)
     os.execv(
         sys.executable,

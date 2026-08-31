@@ -1,6 +1,6 @@
 import { createSign } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 
 import type {
   GitHubRepositorySummary,
@@ -84,13 +84,16 @@ function configuration(): GitHubConfiguration {
       "The admin server is missing GITHUB_APP_PRIVATE_KEY_PATH.",
     );
   }
+  if (!isAbsolute(configuredPath)) {
+    throw new GitHubConfigurationError(
+      "GITHUB_APP_PRIVATE_KEY_PATH must be an absolute path.",
+    );
+  }
 
   return {
     organization,
     issuer,
-    privateKeyPath: isAbsolute(configuredPath)
-      ? configuredPath
-      : resolve(process.cwd(), configuredPath),
+    privateKeyPath: configuredPath,
   };
 }
 
@@ -287,6 +290,23 @@ export async function listOrganizationRepositories() {
 
   repositories.sort((left, right) => left.name.localeCompare(right.name));
   return { organization: config.organization, repositories };
+}
+
+export async function getOrganizationRepository(repositoryId: number) {
+  const { config, token } = await installationToken({ metadata: "read" });
+  const resource = await githubJson<GitHubRepositoryResource>(
+    `/repositories/${repositoryId}`,
+    `Bearer ${token}`,
+  );
+  const repository = repositorySummary(resource);
+  const [owner] = repository.fullName.split("/", 1);
+  if (owner.toLowerCase() !== config.organization.toLowerCase()) {
+    throw new GitHubApiError(
+      403,
+      "The selected repository is outside the configured organization.",
+    );
+  }
+  return repository;
 }
 
 export async function createOrganizationRepository(input: {

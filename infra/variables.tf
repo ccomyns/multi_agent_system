@@ -114,17 +114,6 @@ variable "codex_cli_version" {
   }
 }
 
-variable "spawn_agent_mcp_command" {
-  description = "Absolute path to the required local spawn_agent MCP server executable on the orchestrator AMI."
-  type        = string
-  default     = "/opt/multi-agent/runtime/bin/spawn-agent-mcp"
-
-  validation {
-    condition     = startswith(var.spawn_agent_mcp_command, "/")
-    error_message = "spawn_agent_mcp_command must be an absolute path."
-  }
-}
-
 variable "subagent_ttl_seconds" {
   description = "Hard runtime limit before a stuck subagent is shut down and terminated. Successful subagents terminate as soon as their outputs are uploaded."
   type        = number
@@ -137,9 +126,9 @@ variable "subagent_ttl_seconds" {
 }
 
 variable "agent_image_version" {
-  description = "Semantic version assigned to shared Image Builder components and the subagent recipe. Increment this to rebuild the subagent AMI and shared tools."
+  description = "Semantic version assigned to shared Image Builder components and the data-mining subagent base recipe. Increment this only for baked dependency or downloader changes."
   type        = string
-  default     = "1.1.3"
+  default     = "1.1.5"
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.agent_image_version))
@@ -148,13 +137,24 @@ variable "agent_image_version" {
 }
 
 variable "orchestrator_image_version" {
-  description = "Semantic version assigned to the orchestrator runtime component and image recipe. Increment this to rebuild only the orchestrator AMI."
+  description = "Semantic version assigned to the data-mining orchestrator base component and recipe. Increment this only for baked dependency or downloader changes."
   type        = string
-  default     = "1.1.5"
+  default     = "1.1.7"
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.orchestrator_image_version))
     error_message = "orchestrator_image_version must be a semantic version such as 1.0.1."
+  }
+}
+
+variable "software_builder_orchestrator_image_version" {
+  description = "Semantic version assigned to the independently built software-builder base AMI and its dependency component. Runner-only changes do not require incrementing it."
+  type        = string
+  default     = "1.0.1"
+
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.software_builder_orchestrator_image_version))
+    error_message = "software_builder_orchestrator_image_version must be a semantic version such as 1.0.0."
   }
 }
 

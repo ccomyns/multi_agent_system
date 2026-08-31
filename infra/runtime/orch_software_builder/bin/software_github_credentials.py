@@ -11,8 +11,9 @@ from typing import Any
 import boto3
 
 
-TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_]{20,255}$")
 REPOSITORY_COMPONENT_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+MIN_INSTALLATION_TOKEN_LENGTH = 20
+MAX_INSTALLATION_TOKEN_LENGTH = 8192
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,13 @@ def _validate_credentials(body: dict[str, Any]) -> RepositoryCredentials:
     expires_at = body.get("expires_at")
     repository = body.get("repository")
     permissions = body.get("permissions")
-    if not isinstance(token, str) or not TOKEN_PATTERN.fullmatch(token):
+    if (
+        not isinstance(token, str)
+        or not token.startswith("ghs_")
+        or not MIN_INSTALLATION_TOKEN_LENGTH <= len(token) <= MAX_INSTALLATION_TOKEN_LENGTH
+        or not token.isascii()
+        or any(not 0x21 <= ord(character) <= 0x7E for character in token)
+    ):
         raise RuntimeError("the GitHub token broker returned an invalid token")
     if not isinstance(expires_at, str):
         raise RuntimeError("the GitHub token broker returned an invalid expiry")

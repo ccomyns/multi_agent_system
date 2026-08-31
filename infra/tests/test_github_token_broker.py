@@ -36,6 +36,16 @@ class GitHubTokenBrokerInfrastructureTests(unittest.TestCase):
         self.assertNotIn('resource "aws_ssm_parameter"', github)
         self.assertIn('resource "aws_kms_key" "github_writer_private_key"', github)
 
+    def test_admin_job_api_configuration_is_exported(self) -> None:
+        outputs = (INFRA / "outputs.tf").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'output "github_repository_assignments_table_name"', outputs
+        )
+        self.assertIn(
+            'output "software_builder_orchestrator_launch_template_id"', outputs
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

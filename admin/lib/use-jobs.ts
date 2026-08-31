@@ -65,10 +65,16 @@ export async function launchJob(
   originalTask: string,
   typeOfJob: JobType,
   anchorFile?: File | null,
+  githubRepositoryId?: number,
 ): Promise<Job | null> {
   updateStore({ pending: true, error: null });
   try {
-    return await requestJobLaunch(originalTask, typeOfJob, anchorFile);
+    return await requestJobLaunch(
+      originalTask,
+      typeOfJob,
+      anchorFile,
+      githubRepositoryId,
+    );
   } catch (caught) {
     updateStore({ error: describeError(caught, "The job could not be launched.") });
     return null;

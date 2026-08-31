@@ -78,6 +78,11 @@ output "orchestrator_ami_id" {
   value       = local.orchestrator_ami_id
 }
 
+output "software_builder_orchestrator_ami_id" {
+  description = "Independently built AMI used only by software-builder orchestrators."
+  value       = local.software_builder_orchestrator_ami_id
+}
+
 output "subagent_ami_id" {
   description = "Prebaked browser-enabled AMI used by the subagent manager Lambda."
   value       = local.subagent_ami_id
@@ -91,4 +96,14 @@ output "orchestrator_launch_template_id" {
 output "orchestrator_launch_template_version" {
   description = "Default version of the normal orchestrator launch template."
   value       = aws_launch_template.orchestrator.default_version
+}
+
+output "software_builder_orchestrator_launch_template_id" {
+  description = "Launch template used only for software-builder orchestrator runs."
+  value       = aws_launch_template.software_builder_orchestrator.id
+}
+
+output "software_builder_orchestrator_launch_template_version" {
+  description = "Default version of the software-builder orchestrator launch template."
+  value       = aws_launch_template.software_builder_orchestrator.default_version
 }
