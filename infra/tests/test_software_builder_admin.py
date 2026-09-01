@@ -18,6 +18,11 @@ class SoftwareBuilderAdminTests(unittest.TestCase):
             page.index('fetch("/api/github/repositories"'),
             page.index("requestJobLaunch("),
         )
+        self.assertLess(
+            page.index('fetch("/api/projects"'),
+            page.index("requestJobLaunch("),
+        )
+        self.assertIn("project || undefined", page)
 
     def test_job_reservation_atomically_writes_repository_assignment(self) -> None:
         route = (ROOT / "admin/app/api/jobs/route.ts").read_text(encoding="utf-8")
@@ -29,6 +34,7 @@ class SoftwareBuilderAdminTests(unittest.TestCase):
         self.assertIn(
             "github_repository_full_name: githubRepository.fullName", transaction
         )
+        self.assertIn("global_memory_project_name: projectName", transaction)
         self.assertNotIn("githubRepositoryFullName", route)
 
     def test_software_jobs_select_the_software_launch_template(self) -> None:
@@ -40,6 +46,16 @@ class SoftwareBuilderAdminTests(unittest.TestCase):
             route,
         )
         self.assertIn('{ Key: "TypeOfJob", Value: typeOfJob }', route)
+
+    def test_new_project_creation_writes_optional_markdown_description(self) -> None:
+        route = (ROOT / "admin/app/api/projects/route.ts").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("Key: `${parsed.name}/`", route)
+        self.assertIn("Key: `${parsed.name}/description.md`", route)
+        self.assertIn('ContentType: "text/markdown; charset=utf-8"', route)
+        self.assertIn('IfNoneMatch: "*"', route)
 
 
 if __name__ == "__main__":

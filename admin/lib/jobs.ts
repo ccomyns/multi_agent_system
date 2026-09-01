@@ -120,6 +120,7 @@ export async function requestJobLaunch(
   typeOfJob: JobType,
   anchorFile?: File | null,
   githubRepositoryId?: number,
+  projectName?: string,
 ): Promise<Job> {
   let request: RequestInit;
   if (anchorFile) {
@@ -138,6 +139,7 @@ export async function requestJobLaunch(
         originalTask,
         typeOfJob,
         githubRepositoryId,
+        projectName,
       }),
     };
   }

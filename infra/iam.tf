@@ -203,6 +203,131 @@ resource "aws_iam_role_policy" "github_token_broker" {
   })
 }
 
+// The project credential broker validates the active software job and its
+// immutable assignment before assuming a session-tagged S3 workspace role.
+resource "aws_iam_role" "project_credentials_broker" {
+  name = "${var.project_name}-project-credentials-broker"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "project_credentials_broker_logs" {
+  role       = aws_iam_role.project_credentials_broker.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy" "project_credentials_broker" {
+  name = "read-assignment-and-issue-project-session"
+  role = aws_iam_role.project_credentials_broker.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "ReadActiveSoftwareJob"
+        Effect   = "Allow"
+        Action   = "dynamodb:GetItem"
+        Resource = aws_dynamodb_table.jobs.arn
+      },
+      {
+        Sid      = "ReadTrustedProjectAssignment"
+        Effect   = "Allow"
+        Action   = "dynamodb:GetItem"
+        Resource = aws_dynamodb_table.github_repository_assignments.arn
+      },
+      {
+        Sid    = "AssumeProjectWorkspace"
+        Effect = "Allow"
+        Action = [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+        Resource = aws_iam_role.software_builder_project_workspace.arn
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "software_builder_project_workspace" {
+  name                 = "${var.project_name}-software-builder-project-workspace"
+  max_session_duration = 3600
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        AWS = aws_iam_role.project_credentials_broker.arn
+      }
+      Action = [
+        "sts:AssumeRole",
+        "sts:TagSession"
+      ]
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "software_builder_project_workspace" {
+  name = "assigned-global-memory-project"
+  role = aws_iam_role.software_builder_project_workspace.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "ReadGlobalMemoryBucketLocation"
+        Effect   = "Allow"
+        Action   = "s3:GetBucketLocation"
+        Resource = aws_s3_bucket.global_memory.arn
+      },
+      {
+        Sid    = "ListAssignedProject"
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket",
+          "s3:ListBucketMultipartUploads",
+          "s3:ListBucketVersions"
+        ]
+        Resource = aws_s3_bucket.global_memory.arn
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              "$${aws:PrincipalTag/ProjectName}",
+              "$${aws:PrincipalTag/ProjectName}/*"
+            ]
+          }
+        }
+      },
+      {
+        Sid    = "ReadWriteAssignedProjectObjects"
+        Effect = "Allow"
+        Action = [
+          "s3:AbortMultipartUpload",
+          "s3:DeleteObject",
+          "s3:DeleteObjectVersion",
+          "s3:GetObject",
+          "s3:GetObjectAttributes",
+          "s3:GetObjectVersion",
+          "s3:GetObjectVersionAttributes",
+          "s3:ListMultipartUploadParts",
+          "s3:PutObject",
+          "s3:RestoreObject"
+        ]
+        Resource = "${aws_s3_bucket.global_memory.arn}/$${aws:PrincipalTag/ProjectName}/*"
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role" "subagent" {
   name = "${var.project_name}-subagent"
 
@@ -394,6 +519,100 @@ resource "aws_iam_role_policy" "orchestrator" {
   })
 }
 
+// Software builders use a distinct base identity. It deliberately retains the
+// existing agent-workspace behavior but has no direct global-memory access;
+// project access arrives only through the assignment-validating broker.
+resource "aws_iam_role" "software_builder_orchestrator" {
+  name = "${var.project_name}-software-builder-orchestrator"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_instance_profile" "software_builder_orchestrator" {
+  name = "${var.project_name}-software-builder-orchestrator"
+  role = aws_iam_role.software_builder_orchestrator.name
+}
+
+resource "aws_iam_role_policy_attachment" "software_builder_orchestrator_ssm" {
+  role       = aws_iam_role.software_builder_orchestrator.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_role_policy" "software_builder_orchestrator" {
+  name = "software-builder-runtime"
+  role = aws_iam_role.software_builder_orchestrator.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "InvokeSoftwareBuilderBrokers"
+        Effect = "Allow"
+        Action = "lambda:InvokeFunction"
+        Resource = [
+          aws_lambda_function.github_token_broker.arn,
+          aws_lambda_function.project_credentials_broker.arn
+        ]
+      },
+      {
+        Sid    = "ReadAndFinishOwnJob"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:DeleteItem",
+          "dynamodb:GetItem",
+          "dynamodb:TransactWriteItems",
+          "dynamodb:UpdateItem"
+        ]
+        Resource = aws_dynamodb_table.jobs.arn
+      },
+      {
+        Sid    = "ReadAndRefreshCodexAuth"
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:PutParameter"
+        ]
+        Resource = "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.codex_auth_ssm_parameter_name}"
+      },
+      {
+        Sid      = "ListAgentWorkspace"
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = aws_s3_bucket.agent_workspace.arn
+        Condition = {
+          StringLike = {
+            "s3:prefix" = "jobs/*"
+          }
+        }
+      },
+      {
+        Sid    = "ReadWriteAgentWorkspace"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject"
+        ]
+        Resource = "${aws_s3_bucket.agent_workspace.arn}/jobs/*"
+      },
+      {
+        Sid      = "ReadSoftwareBuilderRuntime"
+        Effect   = "Allow"
+        Action   = "s3:GetObject"
+        Resource = "${aws_s3_bucket.agent_workspace.arn}/system/runtime/software-builder/*"
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role" "image_builder" {
   name = "${var.project_name}-image-builder"
 
@@ -513,10 +732,13 @@ resource "aws_iam_policy" "admin_server" {
         }
       },
       {
-        Sid      = "PassOrchestratorRole"
-        Effect   = "Allow"
-        Action   = "iam:PassRole"
-        Resource = aws_iam_role.orchestrator.arn
+        Sid    = "PassOrchestratorRole"
+        Effect = "Allow"
+        Action = "iam:PassRole"
+        Resource = [
+          aws_iam_role.orchestrator.arn,
+          aws_iam_role.software_builder_orchestrator.arn
+        ]
 
         Condition = {
           StringEquals = {

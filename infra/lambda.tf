@@ -140,6 +140,46 @@ resource "aws_lambda_function" "github_token_broker" {
   ]
 }
 
+data "archive_file" "project_credentials_broker" {
+  type        = "zip"
+  source_file = "${path.module}/../src/project_credentials_broker/handler.py"
+  output_path = "${path.module}/project-credentials-broker.zip"
+}
+
+resource "aws_cloudwatch_log_group" "project_credentials_broker" {
+  name              = "/aws/lambda/${var.project_name}-project-credentials-broker"
+  retention_in_days = 14
+}
+
+resource "aws_lambda_function" "project_credentials_broker" {
+  function_name = "${var.project_name}-project-credentials-broker"
+  description   = "Issues short-lived AWS credentials scoped to a software job's assigned global-memory project."
+  role          = aws_iam_role.project_credentials_broker.arn
+  handler       = "handler.lambda_handler"
+  runtime       = "python3.13"
+  architectures = ["arm64"]
+  timeout       = 15
+  memory_size   = 128
+
+  filename         = data.archive_file.project_credentials_broker.output_path
+  source_code_hash = data.archive_file.project_credentials_broker.output_base64sha256
+
+  environment {
+    variables = {
+      GITHUB_REPOSITORY_ASSIGNMENTS_TABLE_NAME = aws_dynamodb_table.github_repository_assignments.name
+      GLOBAL_MEMORY_BUCKET_NAME                = aws_s3_bucket.global_memory.id
+      JOBS_TABLE_NAME                          = aws_dynamodb_table.jobs.name
+      PROJECT_WORKSPACE_ROLE_ARN               = aws_iam_role.software_builder_project_workspace.arn
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.project_credentials_broker,
+    aws_iam_role_policy.project_credentials_broker,
+    aws_iam_role_policy_attachment.project_credentials_broker_logs,
+  ]
+}
+
 resource "aws_cloudwatch_event_rule" "subagent_terminated" {
   name        = "${var.project_name}-subagent-terminated"
   description = "Reconcile EC2 instance termination with active subagent state."

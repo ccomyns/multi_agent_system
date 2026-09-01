@@ -61,6 +61,11 @@ credentials_module = load_module(
     "software_github_credentials.py",
     SOFTWARE_BUILDER_BIN_DIR,
 )
+project_credentials_module = load_module(
+    "software_project_credentials",
+    "software_project_credentials.py",
+    SOFTWARE_BUILDER_BIN_DIR,
+)
 helper_module = load_module(
     "github_credential_helper",
     "github_credential_helper.py",
@@ -73,6 +78,7 @@ runner_module = load_module(
 )
 
 RepositoryCredentials = credentials_module.RepositoryCredentials
+ProjectCredentials = project_credentials_module.ProjectCredentials
 SoftwareOrchestratorRun = runner_module.SoftwareOrchestratorRun
 
 
@@ -394,6 +400,79 @@ class SoftwareGitHubCredentialTests(unittest.TestCase):
         self.assertEqual(rejected_output.getvalue(), "")
 
 
+class SoftwareProjectCredentialTests(unittest.TestCase):
+    def broker_response(self, **project_overrides):
+        return {
+            "statusCode": 200,
+            "body": {
+                "credentials": {
+                    "access_key_id": "ASIAEXAMPLE",
+                    "secret_access_key": "secret",
+                    "session_token": "session-token",
+                    "expiration": (
+                        datetime.now(timezone.utc) + timedelta(minutes=55)
+                    ).isoformat().replace("+00:00", "Z"),
+                },
+                "project": {
+                    "name": "customer-insights",
+                    "bucket": "global-memory-bucket",
+                    "prefix": "customer-insights/",
+                    "s3_uri": "s3://global-memory-bucket/customer-insights/",
+                    **project_overrides,
+                },
+            },
+        }
+
+    def test_broker_request_contains_identity_but_no_project_scope(self) -> None:
+        client = Mock()
+        client.invoke.return_value = {
+            "Payload": io.BytesIO(
+                json.dumps(self.broker_response()).encode("utf-8")
+            )
+        }
+
+        credentials = project_credentials_module.request_project_credentials(
+            region="us-east-1",
+            function_name="project-credentials-broker",
+            job_id="job_abc1_1234abcd",
+            orchestrator_instance_id="i-1234567890abcdef0",
+            lambda_client=client,
+        )
+
+        request = json.loads(client.invoke.call_args.kwargs["Payload"])
+        self.assertEqual(
+            request,
+            {
+                "job_id": "job_abc1_1234abcd",
+                "orchestrator_instance_id": "i-1234567890abcdef0",
+            },
+        )
+        self.assertEqual(credentials.project_name, "customer-insights")
+        self.assertEqual(
+            credentials.s3_uri,
+            "s3://global-memory-bucket/customer-insights/",
+        )
+
+    def test_broker_response_cannot_broaden_the_project_prefix(self) -> None:
+        client = Mock()
+        client.invoke.return_value = {
+            "Payload": io.BytesIO(
+                json.dumps(
+                    self.broker_response(prefix="", s3_uri="s3://global-memory-bucket/")
+                ).encode("utf-8")
+            )
+        }
+
+        with self.assertRaisesRegex(RuntimeError, "invalid prefix"):
+            project_credentials_module.request_project_credentials(
+                region="us-east-1",
+                function_name="project-credentials-broker",
+                job_id="job_abc1_1234abcd",
+                orchestrator_instance_id="i-1234567890abcdef0",
+                lambda_client=client,
+            )
+
+
 class SoftwareOrchestratorRunnerTests(unittest.TestCase):
     def make_run(self, root: Path) -> SoftwareOrchestratorRun:
         run = SoftwareOrchestratorRun.__new__(SoftwareOrchestratorRun)
@@ -403,9 +482,11 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
         run.orchestrator_instance_id = "i-1234567890abcdef0"
         run.jobs_table = "jobs-table"
         run.workspace_bucket = "workspace-bucket"
+        run.global_memory_bucket = "global-memory-bucket"
         run.auth_parameter = "/project/codex/auth-json"
         run.orchestrator_model = "gpt-5.6-terra"
         run.token_broker_function = "github-token-broker"
+        run.project_broker_function = "project-credentials-broker"
         run.job_root = root / "software-job"
         run.repository_root = run.job_root / "repository"
         run.codex_home = root / "software-codex-home"
@@ -416,6 +497,9 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
         run.failure_file = run.result_dir / "failure.md"
         run.credential_helper = root / "github_credential_helper.py"
         run.credential_helper.write_text("# helper\n", encoding="utf-8")
+        run.project_credential_process = root / "software_project_credentials.py"
+        run.project_credential_process.write_text("# process\n", encoding="utf-8")
+        run.project_aws_config = run.codex_home / "project-aws-config"
         run.bootstrap_log = root / "logs" / "bootstrap.log"
         run.codex_log = root / "logs" / "software-codex.log"
         run.ddb = Mock()
@@ -434,6 +518,9 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
         run.original_auth = ""
         run.repository_id = None
         run.repository_full_name = None
+        run.project_name = None
+        run.project_prefix = None
+        run.project_s3_uri = None
         run.prepare_directories()
         run.bootstrap_log.parent.mkdir()
         run.bootstrap_log.write_text("bootstrap\n", encoding="utf-8")
@@ -550,6 +637,8 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
                 environment["GITHUB_TOKEN_BROKER_FUNCTION_NAME"],
                 run.token_broker_function,
             )
+            self.assertEqual(environment["AWS_EC2_METADATA_DISABLED"], "true")
+            self.assertNotIn("AWS_PROFILE", environment)
             self.assertNotIn("FUNCTION_NAME", environment)
             self.assertNotIn("SPAWN_AGENT_MCP_COMMAND", environment)
 
@@ -561,6 +650,48 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
             self.assertIn("leave the working tree clean", config)
             self.assertNotIn("[sandbox_workspace_write]", config)
             self.assertNotIn("[mcp_servers.", config)
+
+    def test_project_workspace_uses_refreshable_scoped_aws_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            credentials = ProjectCredentials(
+                access_key_id="ASIAEXAMPLE",
+                secret_access_key="secret",
+                session_token="session-token",
+                expiration="2099-01-01T00:00:00Z",
+                project_name="customer-insights",
+                bucket=run.global_memory_bucket,
+                prefix="customer-insights/",
+                s3_uri=(
+                    f"s3://{run.global_memory_bucket}/customer-insights/"
+                ),
+            )
+            with patch.object(
+                runner_module,
+                "request_project_credentials",
+                return_value=credentials,
+            ) as request_credentials:
+                project = run.configure_project_workspace()
+
+            self.assertEqual(project["name"], "customer-insights")
+            request_credentials.assert_called_once_with(
+                region=run.region,
+                function_name=run.project_broker_function,
+                job_id=run.job_id,
+                orchestrator_instance_id=run.orchestrator_instance_id,
+                allow_unassigned=True,
+                lambda_client=run.lambda_client,
+            )
+            environment = run.codex_environment()
+            self.assertEqual(environment["AWS_PROFILE"], "software-builder-project")
+            self.assertEqual(
+                environment["SOFTWARE_BUILDER_PROJECT_S3_URI"],
+                credentials.s3_uri,
+            )
+            self.assertNotIn("AWS_ACCESS_KEY_ID", environment)
+            aws_config = run.project_aws_config.read_text(encoding="utf-8")
+            self.assertIn("[profile software-builder-project]", aws_config)
+            self.assertIn("credential_process =", aws_config)
 
     def test_completion_requires_a_clean_commit_present_on_origin(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

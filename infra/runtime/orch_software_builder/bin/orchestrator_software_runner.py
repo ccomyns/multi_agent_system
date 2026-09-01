@@ -25,6 +25,7 @@ from software_github_credentials import (
     RepositoryCredentials,
     request_repository_credentials,
 )
+from software_project_credentials import request_project_credentials
 
 
 LOG = logging.getLogger("orchestrator-software-runner")
@@ -87,9 +88,13 @@ class SoftwareOrchestratorRun:
         self.orchestrator_instance_id = required_env("ORCHESTRATOR_INSTANCE_ID")
         self.jobs_table = required_env("JOBS_TABLE_NAME")
         self.workspace_bucket = required_env("AGENT_WORKSPACE_BUCKET_NAME")
+        self.global_memory_bucket = required_env("GLOBAL_MEMORY_BUCKET_NAME")
         self.auth_parameter = required_env("CODEX_AUTH_SSM_PARAMETER_NAME")
         self.orchestrator_model = required_env("ORCHESTRATOR_MODEL")
         self.token_broker_function = required_env("GITHUB_TOKEN_BROKER_FUNCTION_NAME")
+        self.project_broker_function = required_env(
+            "PROJECT_CREDENTIALS_BROKER_FUNCTION_NAME"
+        )
 
         self.job_pk = f"JOB#{self.job_id}"
         self.job_root = Path("/var/lib/multi-agent/software-jobs") / self.job_id
@@ -103,6 +108,10 @@ class SoftwareOrchestratorRun:
         self.credential_helper = Path(__file__).resolve().with_name(
             "github_credential_helper.py"
         )
+        self.project_credential_process = Path(__file__).resolve().with_name(
+            "software_project_credentials.py"
+        )
+        self.project_aws_config = self.codex_home / "project-aws-config"
         self.bootstrap_log = Path(
             os.environ.get(
                 "BOOTSTRAP_LOG_PATH",
@@ -133,6 +142,9 @@ class SoftwareOrchestratorRun:
         self.original_auth = ""
         self.repository_id: int | None = None
         self.repository_full_name: str | None = None
+        self.project_name: str | None = None
+        self.project_prefix: str | None = None
+        self.project_s3_uri: str | None = None
 
     def prepare_directories(self) -> None:
         for directory in (self.job_root, self.codex_home, self.result_dir):
@@ -209,6 +221,40 @@ class SoftwareOrchestratorRun:
             orchestrator_instance_id=self.orchestrator_instance_id,
             lambda_client=self.lambda_client,
         )
+
+    def configure_project_workspace(self) -> dict[str, str] | None:
+        if not self.project_credential_process.is_file():
+            raise RuntimeError(
+                f"the project credential process is missing: {self.project_credential_process}"
+            )
+        credentials = request_project_credentials(
+            region=self.region,
+            function_name=self.project_broker_function,
+            job_id=self.job_id,
+            orchestrator_instance_id=self.orchestrator_instance_id,
+            allow_unassigned=True,
+            lambda_client=self.lambda_client,
+        )
+        if credentials is None:
+            return None
+        if credentials.bucket != self.global_memory_bucket:
+            raise RuntimeError("the project broker returned an unexpected global-memory bucket")
+
+        self.project_name = credentials.project_name
+        self.project_prefix = credentials.prefix
+        self.project_s3_uri = credentials.s3_uri
+        self.project_aws_config.write_text(
+            "[profile software-builder-project]\n"
+            f"region = {self.region}\n"
+            f"credential_process = {sys.executable} {self.project_credential_process}\n",
+            encoding="utf-8",
+        )
+        os.chmod(self.project_aws_config, 0o600)
+        return {
+            "name": credentials.project_name,
+            "prefix": credentials.prefix,
+            "s3_uri": credentials.s3_uri,
+        }
 
     @staticmethod
     def _command_failure(label: str, completed: subprocess.CompletedProcess[str]) -> RuntimeError:
@@ -317,13 +363,6 @@ developer_instructions = {toml_string(developer_instructions)}
             "LANG",
             "LC_ALL",
             "TMPDIR",
-            "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY",
-            "AWS_SESSION_TOKEN",
-            "AWS_CONTAINER_CREDENTIALS_FULL_URI",
-            "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
-            "AWS_WEB_IDENTITY_TOKEN_FILE",
-            "AWS_ROLE_ARN",
         )
         environment = {
             name: os.environ[name]
@@ -334,14 +373,28 @@ developer_instructions = {toml_string(developer_instructions)}
             {
                 "AWS_DEFAULT_REGION": self.region,
                 "AWS_REGION": self.region,
+                "AWS_EC2_METADATA_DISABLED": "true",
                 "CODEX_HOME": str(self.codex_home),
                 "GIT_TERMINAL_PROMPT": "0",
                 "GITHUB_TOKEN_BROKER_FUNCTION_NAME": self.token_broker_function,
+                "PROJECT_CREDENTIALS_BROKER_FUNCTION_NAME": self.project_broker_function,
                 "JOB_ID": self.job_id,
                 "ORCHESTRATOR_INSTANCE_ID": self.orchestrator_instance_id,
                 "SOFTWARE_BUILDER_REPOSITORY_ROOT": str(self.repository_root),
             }
         )
+        if self.project_name and self.project_prefix and self.project_s3_uri:
+            environment.update(
+                {
+                    "AWS_CONFIG_FILE": str(self.project_aws_config),
+                    "AWS_PROFILE": "software-builder-project",
+                    "AWS_SDK_LOAD_CONFIG": "1",
+                    "GLOBAL_MEMORY_BUCKET_NAME": self.global_memory_bucket,
+                    "SOFTWARE_BUILDER_PROJECT_NAME": self.project_name,
+                    "SOFTWARE_BUILDER_PROJECT_PREFIX": self.project_prefix,
+                    "SOFTWARE_BUILDER_PROJECT_S3_URI": self.project_s3_uri,
+                }
+            )
         return environment
 
     def run_codex(self, task: str) -> None:
@@ -355,7 +408,16 @@ developer_instructions = {toml_string(developer_instructions)}
             "remotes, request credentials, print credentials, or attempt to access any other "
             "repository. No subagent tools are configured for this runner. Inspect the existing "
             "project before editing, implement the user's task, and run the relevant tests. "
-            "Before finishing, git add and commit every intended change, push the current branch "
+            + (
+                f"A persistent project workspace is available at {self.project_s3_uri}. "
+                "The AWS environment is already configured with short-lived credentials that "
+                "allow unrestricted object reads and writes only inside that exact S3 project "
+                "prefix. You may create, overwrite, or delete objects there as needed, but do "
+                "not attempt to access another global-memory location. "
+                if self.project_s3_uri
+                else "No global-memory project workspace is assigned to this job. "
+            )
+            + "Before finishing, git add and commit every intended change, push the current branch "
             "to origin, verify that the pushed commit is present on origin, and leave the working "
             "tree clean."
         )
@@ -450,6 +512,11 @@ developer_instructions = {toml_string(developer_instructions)}
             },
             "branch": branch,
             "commit_sha": commit_sha,
+            "project": (
+                {"name": self.project_name, "s3_uri": self.project_s3_uri}
+                if self.project_name and self.project_s3_uri
+                else None
+            ),
         }
 
     def upload_outputs(self, result: dict[str, Any]) -> dict[str, str]:
@@ -655,6 +722,21 @@ def main() -> int:
             "assigned repository checked out",
             repository_full_name=repository["full_name"],
             repository_id=repository["id"],
+        )
+        run.telemetry.record(
+            "project_workspace_configuration_started",
+            "requesting the assigned global-memory project scope",
+        )
+        project = run.configure_project_workspace()
+        run.telemetry.record(
+            "project_workspace_configuration_finished",
+            (
+                "assigned global-memory project configured"
+                if project
+                else "no global-memory project assigned"
+            ),
+            project_name=project["name"] if project else None,
+            project_s3_uri=project["s3_uri"] if project else None,
         )
         run.run_codex(task)
         run.telemetry.record(

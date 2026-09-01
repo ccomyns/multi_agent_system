@@ -63,8 +63,11 @@ The audit bucket is an append-only lifecycle destination. The global-memory
 bucket holds durable knowledge across jobs, while the agent-workspace bucket
 holds task specifications, intermediate artifacts, and results under
 `jobs/<job_id>/`. DynamoDB is the operational source of truth for active counts
-and agent state. Both orchestrators and subagents have read-only access to
-global memory; they write job output only to the agent workspace. Each subagent
+and agent state. Data-mining orchestrators and subagents have read-only access
+to global memory. A software-builder orchestrator receives refreshable,
+short-lived credentials for only its assigned top-level project folder and can
+read, create, overwrite, and delete objects inside that folder. Runtime status,
+telemetry, and debug output continue to use the agent workspace. Each subagent
 item includes its
 orchestrator ID, agent ID, AMI ID, instance type, TTL, state, EC2 instance ID,
 and lifecycle timestamps. A real subagent downloads
@@ -92,6 +95,11 @@ jobs use `orchestrator_software_runner.py`; that runner neither imports the
 data-mining runner nor configures the subagent MCP server. It asks the GitHub
 broker for the assigned repository, clones it under the software job directory,
 and starts Codex with the cloned repository root as its working directory.
+When a global-memory project is selected, a second broker validates the active
+job and immutable project assignment before issuing a session-tagged IAM role
+limited to that exact S3 prefix. The Codex process receives it through an AWS
+`credential_process`, so long runs refresh credentials without broadening the
+scope.
 Their durable sources are separated under `infra/runtime/orchestrator/` and
 `infra/runtime/orch_software_builder/`, respectively. The data-mining subagent
 has a third source tree under `infra/runtime/subagent/`. Terraform packages all
@@ -110,8 +118,8 @@ one job record per run (`pk = JOB#<job_id>`) and a single lock item
 (`pk = ACTIVE_JOB`). The lock's `active_job_id` references the active job
 record's `pk`. The browser mints the `job_id` and posts it to the admin server,
 which issues one transaction containing conditional lock and job writes. A
-software-builder transaction also writes its immutable trusted repository
-assignment in that transaction. The lock succeeds only if no job is active,
+software-builder transaction also writes its immutable trusted repository and
+optional global-memory project assignment in that transaction. The lock succeeds only if no job is active,
 and the job write succeeds only if that `job_id` has never been used. Only when
 the transaction commits does the admin server call `ec2:RunInstances`; the
 returned instance ID is stored as
@@ -137,6 +145,7 @@ infra/runtime/orch_software_builder/ Software-builder orchestrator runtime
 src/subagent_manager/   Lambda implementation
 src/subagent_terminator/ S3-triggered terminal-artifact termination Lambda
 src/github_token_broker/ Repository-scoped GitHub credential broker
+src/project_credentials_broker/ Project-scoped AWS credential broker
 tests/                  Python and Node.js unit tests
 ```
 
@@ -174,8 +183,8 @@ aws iam create-access-key --user-name "$(terraform output -raw admin_server_iam_
 The user's policy spans DynamoDB (job table transactions and read access to
 subagent state), EC2 (`RunInstances`, `CreateTags`, `DescribeInstances`, and
 `TerminateInstances` limited to instances tagged `Role=orchestrator`), IAM
-(`PassRole` for the orchestrator instance profile, restricted to EC2), and S3
-(read-only inspection of the system's data buckets).
+(`PassRole` for the orchestrator instance profiles, restricted to EC2), and S3
+(inspection of the system's data buckets plus project creation in global memory).
 
 Use a supported Node.js LTS release. Node 24 is specified in `admin/.nvmrc`.
 
@@ -235,7 +244,7 @@ node --test tests/github_token_broker.test.mjs
 
 The tests cover the configured agent boundary, over-capacity rejection,
 idempotent request IDs, launch failure handling, terminal-artifact termination,
-and termination reconciliation.
+termination reconciliation, and project-scoped credential issuance.
 
 ## GitHub writer credential boundary
 

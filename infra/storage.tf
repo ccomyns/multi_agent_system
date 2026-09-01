@@ -155,9 +155,9 @@ resource "aws_dynamodb_table" "jobs" {
   }
 }
 
-// Immutable repository assignments are separate from the lifecycle record the
-// orchestrator can finish. Only the trusted admin server writes this table;
-// the credential broker reads it, and orchestrators have no direct access.
+// Immutable software-builder assignments are separate from the lifecycle record
+// the orchestrator can finish. Only the trusted admin server writes this table;
+// credential brokers read it, and orchestrators have no direct access.
 resource "aws_dynamodb_table" "github_repository_assignments" {
   name         = "${var.project_name}-github-repository-assignments"
   billing_mode = "PAY_PER_REQUEST"

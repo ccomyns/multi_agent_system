@@ -12,6 +12,10 @@ import { awsClientOptions } from "@/lib/aws";
 import { DEFAULT_JOB_TYPE, isJobType, JOB_ID_PATTERN } from "@/lib/jobs";
 import { listRootProjects } from "@/lib/project-storage";
 import {
+  projectDescriptionError,
+  projectNameError,
+} from "@/lib/project-uploads";
+import {
   jobScopedUploadPath,
   listObjectsUnderPrefix,
   selectResultObjects,
@@ -49,16 +53,8 @@ function parseUploadRequest(value: unknown): UploadRequest | string {
   const projectName = "projectName" in value && typeof value.projectName === "string"
     ? value.projectName.trim()
     : "";
-  if (!projectName || projectName.length > 80) {
-    return "Project names must contain between 1 and 80 characters.";
-  }
-  if (
-    projectName === "." ||
-    projectName === ".." ||
-    /[\\/\u0000-\u001f\u007f]/u.test(projectName)
-  ) {
-    return "Project names cannot contain slashes, backslashes, or control characters.";
-  }
+  const invalidProjectName = projectNameError(projectName);
+  if (invalidProjectName) return invalidProjectName;
 
   if (!("createProject" in value) || typeof value.createProject !== "boolean") {
     return "The upload request must specify whether the project is new.";
@@ -67,9 +63,8 @@ function parseUploadRequest(value: unknown): UploadRequest | string {
   const description = "description" in value && typeof value.description === "string"
     ? value.description.trim()
     : "";
-  if (description.length > 240) {
-    return "Project descriptions cannot exceed 240 characters.";
-  }
+  const invalidDescription = projectDescriptionError(description);
+  if (invalidDescription) return invalidDescription;
 
   if (!("artifactIds" in value) || !Array.isArray(value.artifactIds)) {
     return "Select at least one result file or folder to upload.";

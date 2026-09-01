@@ -34,7 +34,7 @@ output "jobs_table_name" {
 }
 
 output "github_repository_assignments_table_name" {
-  description = "DynamoDB table containing trusted job-to-GitHub-repository assignments."
+  description = "DynamoDB table containing trusted software-builder repository and project assignments."
   value       = aws_dynamodb_table.github_repository_assignments.name
 }
 
@@ -56,6 +56,16 @@ output "codex_auth_ssm_parameter_name" {
 output "github_token_broker_function_name" {
   description = "Lambda function an orchestrator invokes to obtain a repository-scoped GitHub installation token."
   value       = aws_lambda_function.github_token_broker.function_name
+}
+
+output "project_credentials_broker_function_name" {
+  description = "Lambda function a software-builder orchestrator invokes to obtain project-scoped AWS credentials."
+  value       = aws_lambda_function.project_credentials_broker.function_name
+}
+
+output "software_builder_project_workspace_role_arn" {
+  description = "Session-tagged IAM role used for access to one assigned global-memory project."
+  value       = aws_iam_role.software_builder_project_workspace.arn
 }
 
 output "github_writer_private_key_ssm_parameter_name" {

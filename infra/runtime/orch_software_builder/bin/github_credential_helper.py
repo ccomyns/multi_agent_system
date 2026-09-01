@@ -9,6 +9,7 @@ from typing import TextIO
 from urllib.parse import unquote
 
 from software_github_credentials import request_repository_credentials
+from software_project_credentials import base_role_environment
 
 
 def required_env(name: str) -> str:
@@ -59,12 +60,13 @@ def main(
         return 1
 
     try:
-        credentials = request_repository_credentials(
-            region=required_env("AWS_REGION"),
-            function_name=required_env("GITHUB_TOKEN_BROKER_FUNCTION_NAME"),
-            job_id=required_env("JOB_ID"),
-            orchestrator_instance_id=required_env("ORCHESTRATOR_INSTANCE_ID"),
-        )
+        with base_role_environment():
+            credentials = request_repository_credentials(
+                region=required_env("AWS_REGION"),
+                function_name=required_env("GITHUB_TOKEN_BROKER_FUNCTION_NAME"),
+                job_id=required_env("JOB_ID"),
+                orchestrator_instance_id=required_env("ORCHESTRATOR_INSTANCE_ID"),
+            )
         if requested_repository.casefold() != credentials.repository_full_name.casefold():
             return 1
         destination.write("username=x-access-token\n")

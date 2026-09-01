@@ -30,6 +30,7 @@ class SandboxDependencyTests(unittest.TestCase):
         self.assertNotIn("danger-full-access", normal_bootstrap)
         self.assertNotIn("stress", compute.lower())
         self.assertIn("GITHUB_TOKEN_BROKER_FUNCTION_NAME=", compute)
+        self.assertIn("PROJECT_CREDENTIALS_BROKER_FUNCTION_NAME=", compute)
         self.assertNotIn("GITHUB_WRITER_PRIVATE_KEY", compute)
 
 

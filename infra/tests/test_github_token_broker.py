@@ -46,6 +46,28 @@ class GitHubTokenBrokerInfrastructureTests(unittest.TestCase):
             'output "software_builder_orchestrator_launch_template_id"', outputs
         )
 
+    def test_software_builder_uses_a_dedicated_role_and_scoped_project_session(self) -> None:
+        iam = (INFRA / "iam.tf").read_text(encoding="utf-8")
+        compute = (INFRA / "compute.tf").read_text(encoding="utf-8")
+        software_role = iam.split(
+            'resource "aws_iam_role_policy" "software_builder_orchestrator"', 1
+        )[1].split('resource "aws_iam_role" "image_builder"', 1)[0]
+        project_role = iam.split(
+            'resource "aws_iam_role_policy" "software_builder_project_workspace"',
+            1,
+        )[1].split('resource "aws_iam_role" "subagent"', 1)[0]
+
+        self.assertIn(
+            "aws_iam_instance_profile.software_builder_orchestrator.name",
+            compute,
+        )
+        self.assertIn("aws_lambda_function.project_credentials_broker.arn", software_role)
+        self.assertNotIn("global_memory", software_role)
+        self.assertIn('$${aws:PrincipalTag/ProjectName}/*', project_role)
+        self.assertIn('"s3:PutObject"', project_role)
+        self.assertIn('"s3:DeleteObject"', project_role)
+        self.assertIn('"s3:GetObject"', project_role)
+
 
 if __name__ == "__main__":
     unittest.main()

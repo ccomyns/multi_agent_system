@@ -1,6 +1,13 @@
 "use client";
 
-import { ChevronDown, GitBranch, LockKeyhole, RefreshCw, X } from "lucide-react";
+import {
+  ChevronDown,
+  FolderPlus,
+  GitBranch,
+  LockKeyhole,
+  RefreshCw,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Sidebar } from "@/components/sidebar";
@@ -13,13 +20,23 @@ import {
   type GitHubRepositorySummary,
 } from "@/lib/github-repository-types";
 import {
+  isCreateProjectResponse,
   isProjectsResponse,
+  PROJECT_DESCRIPTION_MAX_LENGTH,
+  PROJECT_NAME_MAX_LENGTH,
+  projectDescriptionError,
+  projectNameError,
   type ProjectSummary,
 } from "@/lib/project-uploads";
 import { requestJobLaunch } from "@/lib/jobs";
 import { useJobs } from "@/lib/use-jobs";
 
 interface PendingRepository {
+  name: string;
+  description: string;
+}
+
+interface PendingProject {
   name: string;
   description: string;
 }
@@ -40,6 +57,7 @@ export default function SoftwareBuilderPage() {
   const [contextOpen, setContextOpen] = useState(false);
   const [repositoryPickerOpen, setRepositoryPickerOpen] = useState(false);
   const [createRepositoryOpen, setCreateRepositoryOpen] = useState(false);
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [repositoryName, setRepositoryName] = useState("");
   const [repositoryDescription, setRepositoryDescription] = useState("");
   const [repositoryFormError, setRepositoryFormError] = useState<string | null>(
@@ -47,6 +65,10 @@ export default function SoftwareBuilderPage() {
   );
   const [pendingRepository, setPendingRepository] =
     useState<PendingRepository | null>(null);
+  const [projectName, setProjectName] = useState("");
+  const [projectDescription, setProjectDescription] = useState("");
+  const [projectFormError, setProjectFormError] = useState<string | null>(null);
+  const [pendingProject, setPendingProject] = useState<PendingProject | null>(null);
   const [repositories, setRepositories] = useState<GitHubRepositorySummary[]>([]);
   const [organization, setOrganization] = useState("");
   const [repositoriesLoading, setRepositoriesLoading] = useState(false);
@@ -63,6 +85,7 @@ export default function SoftwareBuilderPage() {
   const repositoryPickerRef = useRef<HTMLDivElement>(null);
   const contextPickerRef = useRef<HTMLDivElement>(null);
   const createRepositoryButtonRef = useRef<HTMLButtonElement>(null);
+  const createProjectButtonRef = useRef<HTMLButtonElement>(null);
   const {
     activeJob,
     error: jobsError,
@@ -74,6 +97,12 @@ export default function SoftwareBuilderPage() {
     setCreateRepositoryOpen(false);
     setRepositoryFormError(null);
     window.requestAnimationFrame(() => createRepositoryButtonRef.current?.focus());
+  }, []);
+
+  const closeCreateProject = useCallback(() => {
+    setCreateProjectOpen(false);
+    setProjectFormError(null);
+    window.requestAnimationFrame(() => createProjectButtonRef.current?.focus());
   }, []);
 
   const loadRepositories = useCallback(async () => {
@@ -207,6 +236,23 @@ export default function SoftwareBuilderPage() {
     };
   }, [closeCreateRepository, createRepositoryOpen]);
 
+  useEffect(() => {
+    if (!createProjectOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") closeCreateProject();
+    }
+
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [closeCreateProject, createProjectOpen]);
+
   function toggleRepositoryMenu() {
     setContextOpen(false);
     if (repositoryPickerOpen) {
@@ -229,10 +275,20 @@ export default function SoftwareBuilderPage() {
 
   function openCreateRepository() {
     setRepositoryPickerOpen(false);
+    setContextOpen(false);
     setRepositoryName(pendingRepository?.name ?? "");
     setRepositoryDescription(pendingRepository?.description ?? "");
     setRepositoryFormError(null);
     setCreateRepositoryOpen(true);
+  }
+
+  function openCreateProject() {
+    setRepositoryPickerOpen(false);
+    setContextOpen(false);
+    setProjectName(pendingProject?.name ?? "");
+    setProjectDescription(pendingProject?.description ?? "");
+    setProjectFormError(null);
+    setCreateProjectOpen(true);
   }
 
   function saveRepositoryDetails(event: React.FormEvent<HTMLFormElement>) {
@@ -255,6 +311,28 @@ export default function SoftwareBuilderPage() {
     closeCreateRepository();
   }
 
+  function saveProjectDetails(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const normalizedName = projectName.trim();
+    const invalidName = projectNameError(normalizedName);
+    const normalizedDescription = projectDescription.trim();
+    const invalidDescription = projectDescriptionError(normalizedDescription);
+    if (invalidName || invalidDescription) {
+      setProjectFormError(invalidName ?? invalidDescription);
+      return;
+    }
+
+    setPendingProject({
+      name: normalizedName,
+      description: normalizedDescription,
+    });
+    setSelectedProject("");
+    setSubmitError(null);
+    setSubmitNotice(null);
+    closeCreateProject();
+  }
+
   async function submitSoftwareBuilder() {
     setSubmitError(null);
     setSubmitNotice(null);
@@ -271,7 +349,9 @@ export default function SoftwareBuilderPage() {
 
     setSubmitting(true);
     let repository = selectedRepository;
+    let project = selectedProject;
     let createdRepositoryName: string | null = null;
+    let createdProjectName: string | null = null;
     try {
       if (pendingRepository) {
         const response = await fetch("/api/github/repositories", {
@@ -310,11 +390,40 @@ export default function SoftwareBuilderPage() {
         throw new Error("Select or configure a GitHub repository before submitting.");
       }
 
+      if (pendingProject) {
+        const response = await fetch("/api/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(pendingProject),
+        });
+        const payload: unknown = await response.json();
+        if (!response.ok) {
+          throw new Error(
+            responseError(payload, `Project creation failed (${response.status}).`),
+          );
+        }
+        if (!isCreateProjectResponse(payload)) {
+          throw new Error("The admin server returned an unexpected project.");
+        }
+
+        createdProjectName = payload.project.name;
+        project = payload.project.name;
+        setProjects((current) =>
+          [
+            ...current.filter((project) => project.name !== payload.project.name),
+            payload.project,
+          ].sort((left, right) => left.name.localeCompare(right.name)),
+        );
+        setSelectedProject(payload.project.name);
+        setPendingProject(null);
+      }
+
       const job = await requestJobLaunch(
         originalTask,
         "software_builder",
         null,
         repository.id,
+        project || undefined,
       );
       setIdea("");
       setSubmitNotice(
@@ -322,8 +431,14 @@ export default function SoftwareBuilderPage() {
       );
       await refreshJobs();
     } catch (caught) {
-      const prefix = createdRepositoryName
-        ? `${createdRepositoryName} was created, but the job was not launched. `
+      const createdResources = [
+        createdRepositoryName ? `Repository ${createdRepositoryName}` : null,
+        createdProjectName ? `project ${createdProjectName}` : null,
+      ].filter((resource): resource is string => Boolean(resource));
+      const prefix = createdResources.length
+        ? `${createdResources.join(" and ")} ${
+            createdResources.length === 1 ? "was" : "were"
+          } created, but the job was not launched. `
         : "";
       setSubmitError(
         `${prefix}${
@@ -379,7 +494,7 @@ export default function SoftwareBuilderPage() {
                       onClick={openCreateRepository}
                     >
                       <span>
-                        <strong>Create a new project</strong>
+                        <strong>Create a new repo</strong>
                         {pendingRepository ? (
                           <small>{pendingRepository.name}</small>
                         ) : null}
@@ -404,7 +519,7 @@ export default function SoftwareBuilderPage() {
                         onClick={toggleRepositoryMenu}
                       >
                         <span>
-                          <strong>Pick an Existing Project</strong>
+                          <strong>Pick an Existing Repo</strong>
                           {selectedRepository ? (
                             <small>{selectedRepository.fullName}</small>
                           ) : organization ? (
@@ -516,78 +631,130 @@ export default function SoftwareBuilderPage() {
                 </div>
               </section>
 
-              <div className="software-context-picker" ref={contextPickerRef}>
-                <button
-                  className={
-                    contextOpen
-                      ? "software-context-panel is-open"
-                      : "software-context-panel"
-                  }
-                  type="button"
-                  aria-expanded={contextOpen}
-                  aria-controls="software-context-menu"
-                  onClick={toggleContextMenu}
-                >
-                  <span>
-                    <strong>Add Project Context</strong>
-                    {selectedProject ? <small>{selectedProject}</small> : null}
-                  </span>
-                  <ChevronDown size={17} strokeWidth={1.8} aria-hidden="true" />
-                </button>
+              <section className="software-builder-panel software-runtime-panel">
+                <h2>CONFIGURE RUNTIME ENVIRONMENT</h2>
+                <div className="software-builder-panel-body">
+                  <div className="software-repo-controls">
+                    <button
+                      ref={createProjectButtonRef}
+                      className="software-create-repository-trigger"
+                      data-testid="create-project-trigger"
+                      type="button"
+                      onClick={openCreateProject}
+                    >
+                      <span>
+                        <strong>Create a new project</strong>
+                        {pendingProject ? <small>{pendingProject.name}</small> : null}
+                      </span>
+                      <FolderPlus size={17} strokeWidth={1.8} aria-hidden="true" />
+                    </button>
 
-                {contextOpen ? (
-                  <div
-                    className="software-context-menu"
-                    id="software-context-menu"
-                    role="listbox"
-                    aria-label="Global memory projects"
-                  >
-                    {projectsLoading ? (
-                      <div className="software-context-state" role="status">
-                        <RefreshCw
-                          className="software-context-spin"
-                          size={15}
+                    <div
+                      className="software-repository-picker"
+                      ref={contextPickerRef}
+                    >
+                      <button
+                        className={
+                          contextOpen
+                            ? "software-repository-picker-panel is-open"
+                            : "software-repository-picker-panel"
+                        }
+                        data-testid="project-picker-trigger"
+                        type="button"
+                        aria-expanded={contextOpen}
+                        aria-controls="software-context-menu"
+                        onClick={toggleContextMenu}
+                      >
+                        <span>
+                          <strong>Pick an existing project</strong>
+                          {selectedProject ? <small>{selectedProject}</small> : null}
+                        </span>
+                        <ChevronDown
+                          size={17}
+                          strokeWidth={1.8}
                           aria-hidden="true"
                         />
-                        Loading projects…
-                      </div>
-                    ) : projectsError ? (
-                      <div className="software-context-state is-error" role="alert">
-                        <span>{projectsError}</span>
-                        <button type="button" onClick={() => void loadProjects()}>
-                          Try again
-                        </button>
-                      </div>
-                    ) : projects.length === 0 ? (
-                      <div className="software-context-state">
-                        No project folders found.
-                      </div>
-                    ) : (
-                      <div className="software-context-options">
-                        {projects.map((project) => (
-                          <button
-                            className={
-                              selectedProject === project.name
-                                ? "is-selected"
-                                : undefined
-                            }
-                            key={project.name}
-                            type="button"
-                            role="option"
-                            aria-selected={selectedProject === project.name}
-                            onClick={() => {
-                              setSelectedProject(project.name);
-                              setContextOpen(false);
-                            }}
-                          >
-                            {project.name}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                      </button>
+
+                      {contextOpen ? (
+                        <div
+                          className="software-context-menu"
+                          data-testid="project-picker-menu"
+                          id="software-context-menu"
+                          role="listbox"
+                          aria-label="Global memory projects"
+                        >
+                          {projectsLoading ? (
+                            <div className="software-context-state" role="status">
+                              <RefreshCw
+                                className="software-context-spin"
+                                size={15}
+                                aria-hidden="true"
+                              />
+                              Loading projects…
+                            </div>
+                          ) : projectsError ? (
+                            <div
+                              className="software-context-state is-error"
+                              role="alert"
+                            >
+                              <span>{projectsError}</span>
+                              <button
+                                type="button"
+                                onClick={() => void loadProjects()}
+                              >
+                                Try again
+                              </button>
+                            </div>
+                          ) : projects.length === 0 ? (
+                            <div className="software-context-state">
+                              No project folders found.
+                            </div>
+                          ) : (
+                            <div className="software-context-options">
+                              {projects.map((project) => (
+                                <button
+                                  className={
+                                    selectedProject === project.name
+                                      ? "is-selected"
+                                      : undefined
+                                  }
+                                  key={project.name}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={selectedProject === project.name}
+                                  onClick={() => {
+                                    setSelectedProject(project.name);
+                                    setPendingProject(null);
+                                    setSubmitError(null);
+                                    setSubmitNotice(null);
+                                    setContextOpen(false);
+                                  }}
+                                >
+                                  {project.name}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
-                ) : null}
-              </div>
+
+                  {pendingProject ? (
+                    <div className="software-repository-pending" role="status">
+                      <FolderPlus size={16} strokeWidth={1.8} aria-hidden="true" />
+                      <span>
+                        <strong>{pendingProject.name}</strong>
+                        Will be created only when you click Submit.
+                      </span>
+                      <button type="button" onClick={openCreateProject}>
+                        Edit
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </section>
             </div>
 
             <footer className="software-builder-actions">
@@ -608,9 +775,13 @@ export default function SoftwareBuilderPage() {
                 onClick={() => void submitSoftwareBuilder()}
               >
                 {submitting
-                  ? pendingRepository
-                    ? "CREATING REPO…"
-                    : "LAUNCHING…"
+                  ? pendingRepository && pendingProject
+                    ? "CREATING SETUP…"
+                    : pendingRepository
+                      ? "CREATING REPO…"
+                      : pendingProject
+                        ? "CREATING PROJECT…"
+                        : "LAUNCHING…"
                   : "SUBMIT"}
               </button>
             </footer>
@@ -728,6 +899,124 @@ export default function SoftwareBuilderPage() {
                   disabled={!repositoryName.trim()}
                 >
                   <GitBranch size={15} strokeWidth={1.9} aria-hidden="true" />
+                  Save details
+                </button>
+              </footer>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
+      {createProjectOpen ? (
+        <div
+          className="software-repository-modal-backdrop"
+          onMouseDown={closeCreateProject}
+        >
+          <section
+            className="software-repository-modal"
+            data-testid="create-project-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="software-project-modal-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="software-repository-modal-header">
+              <div className="software-repository-modal-heading">
+                <span className="software-repository-modal-icon" aria-hidden="true">
+                  <FolderPlus size={21} strokeWidth={1.8} />
+                </span>
+                <div>
+                  <h2 id="software-project-modal-title">New Project</h2>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Close create project dialog"
+                onClick={closeCreateProject}
+              >
+                <X size={17} aria-hidden="true" />
+              </button>
+            </header>
+
+            <form onSubmit={saveProjectDetails}>
+              <div className="software-repository-form-fields">
+                <label htmlFor="software-project-name">
+                  <span>
+                    Project name <strong>Required</strong>
+                  </span>
+                  <input
+                    autoFocus
+                    id="software-project-name"
+                    name="projectName"
+                    type="text"
+                    required
+                    maxLength={PROJECT_NAME_MAX_LENGTH}
+                    autoComplete="off"
+                    value={projectName}
+                    placeholder="e.g. customer-insights"
+                    onChange={(event) => {
+                      setProjectName(event.target.value);
+                      setProjectFormError(null);
+                    }}
+                  />
+                  <small>
+                    Use a unique root-folder name with letters, numbers, spaces, or
+                    standard punctuation.
+                  </small>
+                </label>
+
+                <label htmlFor="software-project-description">
+                  <span>
+                    Description <em>Optional</em>
+                  </span>
+                  <textarea
+                    id="software-project-description"
+                    name="projectDescription"
+                    rows={4}
+                    maxLength={PROJECT_DESCRIPTION_MAX_LENGTH}
+                    value={projectDescription}
+                    placeholder="What context should this project contain?"
+                    onChange={(event) => {
+                      setProjectDescription(event.target.value);
+                      setProjectFormError(null);
+                    }}
+                  />
+                  <small>
+                    {projectDescription.length}/{PROJECT_DESCRIPTION_MAX_LENGTH} characters
+                  </small>
+                </label>
+              </div>
+
+              <div className="software-repository-privacy-note">
+                <LockKeyhole size={15} strokeWidth={1.8} aria-hidden="true" />
+                <span>
+                  <strong>Created on Submit</strong>
+                  These details are staged here first. The global-memory project and
+                  optional description.md file will only be created when you click
+                  Submit.
+                </span>
+              </div>
+
+              {projectFormError ? (
+                <div className="software-repository-form-error" role="alert">
+                  {projectFormError}
+                </div>
+              ) : null}
+
+              <footer className="software-repository-modal-actions">
+                <button
+                  className="software-repository-cancel"
+                  type="button"
+                  onClick={closeCreateProject}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="software-repository-create"
+                  type="submit"
+                  disabled={!projectName.trim()}
+                >
+                  <FolderPlus size={15} strokeWidth={1.9} aria-hidden="true" />
                   Save details
                 </button>
               </footer>

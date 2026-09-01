@@ -4,7 +4,7 @@ import {
   RunInstancesCommand,
   TerminateInstancesCommand,
 } from "@aws-sdk/client-ec2";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import {
   DynamoDBDocumentClient,
   GetCommand,
@@ -22,6 +22,7 @@ import {
 } from "@/lib/github-repositories";
 import type { Job, JobStatus, JobType, JobsSnapshot } from "@/lib/jobs";
 import { DEFAULT_JOB_TYPE, isJobType, JOB_ID_PATTERN } from "@/lib/jobs";
+import { projectNameError } from "@/lib/project-uploads";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,6 +46,7 @@ type LaunchJobRequest = {
   githubRepositoryId?: unknown;
   jobId?: unknown;
   originalTask?: unknown;
+  projectName?: unknown;
   typeOfJob?: unknown;
 };
 
@@ -84,12 +86,14 @@ function configuration() {
     process.env.SOFTWARE_BUILDER_ORCHESTRATOR_LAUNCH_TEMPLATE_ID;
   const repositoryAssignmentsTable =
     process.env.GITHUB_REPOSITORY_ASSIGNMENTS_TABLE_NAME;
+  const globalMemoryBucket = process.env.GLOBAL_MEMORY_BUCKET_NAME;
   const workspaceBucket = process.env.AGENT_WORKSPACE_BUCKET_NAME;
   if (
     !jobsTable ||
     !launchTemplateId ||
     !softwareBuilderLaunchTemplateId ||
     !repositoryAssignmentsTable ||
+    !globalMemoryBucket ||
     !workspaceBucket
   ) {
     return null;
@@ -102,13 +106,14 @@ function configuration() {
     softwareBuilderLaunchTemplateVersion:
       process.env.SOFTWARE_BUILDER_ORCHESTRATOR_LAUNCH_TEMPLATE_VERSION || "$Default",
     repositoryAssignmentsTable,
+    globalMemoryBucket,
     workspaceBucket,
     region: process.env.AWS_REGION,
   };
 }
 
 function configurationError() {
-  return "The admin server is missing a jobs table, repository assignments table, workspace bucket, or orchestrator launch template setting.";
+  return "The admin server is missing a jobs table, repository assignments table, global-memory bucket, workspace bucket, or orchestrator launch template setting.";
 }
 
 function anchorFileExtension(name: string): AnchorFileExtension | null {
@@ -128,6 +133,7 @@ async function parseLaunchRequest(request: Request): Promise<ParsedLaunchJobRequ
       githubRepositoryId: form.get("githubRepositoryId"),
       jobId: form.get("jobId"),
       originalTask: form.get("originalTask"),
+      projectName: form.get("projectName") ?? undefined,
       typeOfJob: form.get("typeOfJob"),
       anchorFile: candidate && typeof candidate !== "string" ? candidate : null,
     };
@@ -135,6 +141,22 @@ async function parseLaunchRequest(request: Request): Promise<ParsedLaunchJobRequ
 
   const input = (await request.json()) as LaunchJobRequest;
   return { ...input, anchorFile: null };
+}
+
+async function projectExists(bucket: string, projectName: string) {
+  const s3 = new S3Client(awsClientOptions());
+  try {
+    const response = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: `${projectName}/`,
+        MaxKeys: 1,
+      }),
+    );
+    return (response.KeyCount ?? response.Contents?.length ?? 0) > 0;
+  } finally {
+    s3.destroy();
+  }
 }
 
 async function validatedAnchorUpload(file: File) {
@@ -353,11 +375,18 @@ export async function POST(request: Request) {
       400,
     );
   }
+  if (typeOfJob === "data_mining" && input.projectName !== undefined) {
+    return errorResponse(
+      "projectName is only valid for software-builder jobs.",
+      400,
+    );
+  }
   if (typeOfJob === "software_builder" && input.anchorFile) {
     return errorResponse("Software-builder jobs do not accept anchor files.", 400);
   }
 
   let githubRepository: Awaited<ReturnType<typeof getOrganizationRepository>> | null = null;
+  let projectName: string | null = null;
   if (typeOfJob === "software_builder") {
     if (
       typeof input.githubRepositoryId !== "number" ||
@@ -388,6 +417,31 @@ export async function POST(request: Request) {
           : "The selected GitHub repository could not be validated.",
         502,
       );
+    }
+
+    if (input.projectName !== undefined) {
+      if (typeof input.projectName !== "string") {
+        return errorResponse("projectName must be a string.", 400);
+      }
+      const invalidProjectName = projectNameError(input.projectName);
+      if (invalidProjectName) return errorResponse(invalidProjectName, 400);
+      projectName = input.projectName.trim();
+      try {
+        if (!(await projectExists(config.globalMemoryBucket, projectName))) {
+          return errorResponse(
+            "The selected global-memory project no longer exists.",
+            404,
+          );
+        }
+      } catch (error) {
+        console.error("Software-builder project validation failed", error);
+        return errorResponse(
+          error instanceof Error
+            ? `The selected project could not be validated: ${error.message}`
+            : "The selected project could not be validated.",
+          502,
+        );
+      }
     }
   }
 
@@ -455,6 +509,9 @@ export async function POST(request: Request) {
                       job_id: jobId,
                       github_repository_id: githubRepository.id,
                       github_repository_full_name: githubRepository.fullName,
+                      ...(projectName
+                        ? { global_memory_project_name: projectName }
+                        : {}),
                       created_at: createdAt,
                     },
                     ConditionExpression: "attribute_not_exists(job_id)",

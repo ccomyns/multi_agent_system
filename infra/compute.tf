@@ -74,6 +74,7 @@ locals {
     ${local.orchestrator_environment_bootstrap}
 
     cat >> /etc/multi-agent/orchestrator.env <<ENV
+    PROJECT_CREDENTIALS_BROKER_FUNCTION_NAME=${aws_lambda_function.project_credentials_broker.function_name}
     RUNTIME_ARTIFACT_BUCKET=${aws_s3_bucket.agent_workspace.id}
     RUNTIME_ARTIFACT_BUCKET_OWNER=${data.aws_caller_identity.current.account_id}
     ORCHESTRATOR_RUNTIME_NAME=software-builder
@@ -155,7 +156,7 @@ resource "aws_launch_template" "software_builder_orchestrator" {
   instance_initiated_shutdown_behavior = "terminate"
 
   iam_instance_profile {
-    name = aws_iam_instance_profile.orchestrator.name
+    name = aws_iam_instance_profile.software_builder_orchestrator.name
   }
 
   network_interfaces {
