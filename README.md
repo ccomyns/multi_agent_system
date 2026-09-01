@@ -356,6 +356,86 @@ terraform apply tfplan
 Do not run `apply` until the plan, AWS account, region, permissions, and
 estimated cost have been reviewed.
 
+### Proof-of-concept PostgreSQL database
+
+Terraform provisions one publicly reachable, Single-AZ Amazon RDS for
+PostgreSQL `db.t4g.micro` instance with 20 GiB of encrypted gp3 storage. It uses
+the existing project VPC, its internet gateway and public route table, and two
+public subnets in separate Availability Zones. The database security group
+deliberately allows TCP port 5432 from `0.0.0.0/0`. This exposure and the lack of
+retained backups, deletion protection, and a final snapshot are PoC choices,
+not production defaults.
+
+The initial database is `researchagents` and its master username is
+`researchadmin`. Terraform generates the password; no credential is stored in
+source-controlled configuration. After `terraform apply`, connection fields
+are available at these Parameter Store paths, where `<project_name>` is the
+`project_name` Terraform variable (by default `financial-research-agents`):
+
+| Connection field | SSM parameter | Type |
+| --- | --- | --- |
+| Host | `/<project_name>/database/postgresql/host` | `String` |
+| Port | `/<project_name>/database/postgresql/port` | `String` |
+| Database name | `/<project_name>/database/postgresql/database-name` | `String` |
+| Username | `/<project_name>/database/postgresql/username` | `String` |
+| Password | `/<project_name>/database/postgresql/password` | `SecureString` |
+
+`terraform output postgresql_ssm_parameter_names` reports the exact paths, but
+no Terraform output exposes the password. The generated password and the
+managed SecureString value are nevertheless present in Terraform state. Store
+state in a suitably protected backend and do not print or archive plan files in
+untrusted logs.
+
+A caller needs `ssm:GetParameters` (or `ssm:GetParameter` for individual
+lookups) for those paths. Retrieving the SecureString with `--with-decryption`
+also requires permission to decrypt it. The parameter uses the account's
+standard SSM encryption key. The repository's agent roles are not automatically
+granted database-credential access; attach this narrowly scoped access only to
+the agents or applications that should connect.
+
+The following example retrieves all fields in one API call and constructs a
+URL-encoded PostgreSQL `DATABASE_URL` without writing a plaintext configuration
+file. Run it from `infra/` after apply with an appropriately authorized AWS
+identity:
+
+```bash
+DB_PARAMETER_PREFIX="$(terraform output -raw postgresql_ssm_parameter_prefix)"
+export DB_PARAMETERS_JSON="$(aws ssm get-parameters \
+  --region us-east-1 \
+  --with-decryption \
+  --names \
+    "$DB_PARAMETER_PREFIX/host" \
+    "$DB_PARAMETER_PREFIX/port" \
+    "$DB_PARAMETER_PREFIX/database-name" \
+    "$DB_PARAMETER_PREFIX/username" \
+    "$DB_PARAMETER_PREFIX/password" \
+  --output json)"
+
+export DATABASE_URL="$(python3 - <<'PY'
+import json
+import os
+from urllib.parse import quote
+
+parameters = {
+    item["Name"].rsplit("/", 1)[-1]: item["Value"]
+    for item in json.loads(os.environ["DB_PARAMETERS_JSON"])["Parameters"]
+}
+username = quote(parameters["username"], safe="")
+password = quote(parameters["password"], safe="")
+database_name = quote(parameters["database-name"], safe="")
+print(
+    f"postgresql://{username}:{password}@{parameters['host']}:"
+    f"{parameters['port']}/{database_name}?sslmode=require"
+)
+PY
+)"
+unset DB_PARAMETERS_JSON DB_PARAMETER_PREFIX
+```
+
+Do not echo `DATABASE_URL` or enable shell command tracing while handling it.
+Applications can read the URL from the process environment and connect with a
+PostgreSQL driver that accepts standard connection URIs.
+
 Applying this configuration builds three independently versioned base AMIs:
 
 - Data-mining orchestrator: Codex CLI, DuckDB CLI, Python dependencies, and a

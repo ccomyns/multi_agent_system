@@ -38,6 +38,42 @@ output "github_repository_assignments_table_name" {
   value       = aws_dynamodb_table.github_repository_assignments.name
 }
 
+output "rds_endpoint" {
+  description = "Hostname of the public proof-of-concept PostgreSQL RDS instance."
+  value       = aws_db_instance.postgresql.address
+}
+
+output "rds_port" {
+  description = "Port of the proof-of-concept PostgreSQL RDS instance."
+  value       = aws_db_instance.postgresql.port
+}
+
+output "rds_database_identifier" {
+  description = "AWS identifier of the proof-of-concept PostgreSQL RDS instance."
+  value       = aws_db_instance.postgresql.identifier
+}
+
+output "rds_database_name" {
+  description = "Initial database name on the proof-of-concept PostgreSQL RDS instance."
+  value       = aws_db_instance.postgresql.db_name
+}
+
+output "postgresql_ssm_parameter_prefix" {
+  description = "SSM Parameter Store hierarchy containing PostgreSQL connection information."
+  value       = local.postgresql_ssm_parameter_prefix
+}
+
+output "postgresql_ssm_parameter_names" {
+  description = "Names of the SSM parameters containing PostgreSQL connection information."
+  value = {
+    host          = aws_ssm_parameter.postgresql_host.name
+    port          = aws_ssm_parameter.postgresql_port.name
+    database_name = aws_ssm_parameter.postgresql_database_name.name
+    username      = aws_ssm_parameter.postgresql_username.name
+    password      = aws_ssm_parameter.postgresql_password.name
+  }
+}
+
 output "job_results_prefix" {
   description = "S3 location under which each orchestrator writes its final output."
   value       = "s3://${aws_s3_bucket.agent_workspace.id}/jobs/"
