@@ -234,6 +234,42 @@ class SoftwareRunnerSeparationTests(unittest.TestCase):
         self.assertIn("apt-get install -y git", images)
         self.assertIn('"git --version"', images)
 
+    def test_software_builder_database_access_is_scoped_to_its_role_and_network(self) -> None:
+        infra = Path(__file__).resolve().parents[1]
+        compute = (infra / "compute.tf").read_text(encoding="utf-8")
+        database = (infra / "database.tf").read_text(encoding="utf-8")
+        iam = (infra / "iam.tf").read_text(encoding="utf-8")
+
+        normal_launch_template = compute.split(
+            'resource "aws_launch_template" "orchestrator"', 1
+        )[1].split(
+            'resource "aws_launch_template" "software_builder_orchestrator"', 1
+        )[0]
+        software_launch_template = compute.split(
+            'resource "aws_launch_template" "software_builder_orchestrator"', 1
+        )[1]
+        normal_policy = iam.split(
+            'resource "aws_iam_role_policy" "orchestrator"', 1
+        )[1].split(
+            'resource "aws_iam_role" "software_builder_orchestrator"', 1
+        )[0]
+        software_policy = iam.split(
+            'resource "aws_iam_role_policy" "software_builder_orchestrator"', 1
+        )[1].split('resource "aws_iam_role" "image_builder"', 1)[0]
+
+        self.assertIn("POSTGRESQL_SSM_PARAMETER_PREFIX=", compute)
+        self.assertNotIn("software_builder_database_client", normal_launch_template)
+        self.assertIn("software_builder_database_client", software_launch_template)
+        self.assertIn(
+            'resource "aws_security_group" "software_builder_database_client"',
+            database,
+        )
+        self.assertIn("security_groups = [aws_security_group.postgresql.id]", database)
+        self.assertNotIn("ReadPostgresqlCredentials", normal_policy)
+        self.assertIn("ReadPostgresqlCredentials", software_policy)
+        self.assertIn('"ssm:GetParameters"', software_policy)
+        self.assertIn("local.postgresql_ssm_parameter_prefix", software_policy)
+
 
 class SoftwareGitHubCredentialTests(unittest.TestCase):
     def broker_response(self, **overrides):
@@ -484,6 +520,7 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
         run.workspace_bucket = "workspace-bucket"
         run.global_memory_bucket = "global-memory-bucket"
         run.auth_parameter = "/project/codex/auth-json"
+        run.database_parameter_prefix = "/project/database/postgresql"
         run.orchestrator_model = "gpt-5.6-terra"
         run.token_broker_function = "github-token-broker"
         run.project_broker_function = "project-credentials-broker"
@@ -500,6 +537,7 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
         run.project_credential_process = root / "software_project_credentials.py"
         run.project_credential_process.write_text("# process\n", encoding="utf-8")
         run.project_aws_config = run.codex_home / "project-aws-config"
+        run.database_url_file = run.codex_home / "database-url"
         run.bootstrap_log = root / "logs" / "bootstrap.log"
         run.codex_log = root / "logs" / "software-codex.log"
         run.ddb = Mock()
@@ -516,16 +554,83 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
             orchestrator_instance_id=run.orchestrator_instance_id,
         )
         run.original_auth = ""
+        run.database_url = "postgresql://user:password@database.example.com:5432/app"
         run.repository_id = None
         run.repository_full_name = None
         run.project_name = None
         run.project_prefix = None
         run.project_s3_uri = None
         run.prepare_directories()
+        run._atomic_secret_write(run.database_url_file, run.database_url)
         run.bootstrap_log.parent.mkdir()
         run.bootstrap_log.write_text("bootstrap\n", encoding="utf-8")
         run.codex_log.write_text("", encoding="utf-8")
         return run
+
+    def test_database_credentials_are_loaded_from_ssm_and_stored_outside_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            values = {
+                "host": "database.example.com",
+                "port": "5432",
+                "database-name": "research agents",
+                "username": "research admin",
+                "password": "p@ss/word",
+            }
+            run.ssm.get_parameters.return_value = {
+                "Parameters": [
+                    {
+                        "Name": f"{run.database_parameter_prefix}/{name}",
+                        "Value": value,
+                    }
+                    for name, value in values.items()
+                ],
+                "InvalidParameters": [],
+            }
+
+            run.install_database_credentials()
+
+            self.assertEqual(
+                run.database_url,
+                "postgresql://research%20admin:p%40ss%2Fword@"
+                "database.example.com:5432/research%20agents?sslmode=require",
+            )
+            self.assertEqual(
+                run.database_url_file.read_text(encoding="utf-8").strip(),
+                run.database_url,
+            )
+            self.assertEqual(run.database_url_file.stat().st_mode & 0o777, 0o600)
+            self.assertFalse(run.database_url_file.is_relative_to(run.repository_root))
+            run.ssm.get_parameters.assert_called_once_with(
+                Names=[
+                    f"{run.database_parameter_prefix}/host",
+                    f"{run.database_parameter_prefix}/port",
+                    f"{run.database_parameter_prefix}/database-name",
+                    f"{run.database_parameter_prefix}/username",
+                    f"{run.database_parameter_prefix}/password",
+                ],
+                WithDecryption=True,
+            )
+
+            run.clear_database_credentials()
+            self.assertEqual(run.database_url, "")
+            self.assertFalse(run.database_url_file.exists())
+
+    def test_database_credentials_fail_closed_when_ssm_omits_a_parameter(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            run.clear_database_credentials()
+            run.ssm.get_parameters.return_value = {
+                "Parameters": [],
+                "InvalidParameters": [
+                    f"{run.database_parameter_prefix}/password"
+                ],
+            }
+
+            with self.assertRaisesRegex(RuntimeError, "do not exist"):
+                run.install_database_credentials()
+
+            self.assertFalse(run.database_url_file.exists())
 
     def credentials(self) -> RepositoryCredentials:
         return RepositoryCredentials(
@@ -638,6 +743,11 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
                 run.token_broker_function,
             )
             self.assertEqual(environment["AWS_EC2_METADATA_DISABLED"], "true")
+            self.assertEqual(environment["DATABASE_URL"], run.database_url)
+            self.assertEqual(
+                environment["DATABASE_URL_FILE"],
+                str(run.database_url_file),
+            )
             self.assertNotIn("AWS_PROFILE", environment)
             self.assertNotIn("FUNCTION_NAME", environment)
             self.assertNotIn("SPAWN_AGENT_MCP_COMMAND", environment)
@@ -648,6 +758,8 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
             self.assertIn("git add and commit every intended change", config)
             self.assertIn("push the current branch to origin", config)
             self.assertIn("leave the working tree clean", config)
+            self.assertIn("PostgreSQL DATABASE_URL is available", config)
+            self.assertNotIn(run.database_url, config)
             self.assertNotIn("[sandbox_workspace_write]", config)
             self.assertNotIn("[mcp_servers.", config)
 

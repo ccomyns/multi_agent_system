@@ -46,6 +46,24 @@ resource "aws_security_group" "postgresql" {
   }
 }
 
+resource "aws_security_group" "software_builder_database_client" {
+  name_prefix = "${var.project_name}-software-builder-database-client-"
+  description = "PostgreSQL egress for software-builder orchestrators."
+  vpc_id      = aws_vpc.main.id
+
+  egress {
+    description     = "PostgreSQL to the proof-of-concept database"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.postgresql.id]
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 resource "aws_db_instance" "postgresql" {
   identifier = "${var.project_name}-postgresql"
 

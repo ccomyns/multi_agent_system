@@ -90,6 +90,9 @@ class SoftwareOrchestratorRun:
         self.workspace_bucket = required_env("AGENT_WORKSPACE_BUCKET_NAME")
         self.global_memory_bucket = required_env("GLOBAL_MEMORY_BUCKET_NAME")
         self.auth_parameter = required_env("CODEX_AUTH_SSM_PARAMETER_NAME")
+        self.database_parameter_prefix = required_env(
+            "POSTGRESQL_SSM_PARAMETER_PREFIX"
+        ).rstrip("/")
         self.orchestrator_model = required_env("ORCHESTRATOR_MODEL")
         self.token_broker_function = required_env("GITHUB_TOKEN_BROKER_FUNCTION_NAME")
         self.project_broker_function = required_env(
@@ -112,6 +115,7 @@ class SoftwareOrchestratorRun:
             "software_project_credentials.py"
         )
         self.project_aws_config = self.codex_home / "project-aws-config"
+        self.database_url_file = self.codex_home / "database-url"
         self.bootstrap_log = Path(
             os.environ.get(
                 "BOOTSTRAP_LOG_PATH",
@@ -140,6 +144,7 @@ class SoftwareOrchestratorRun:
         )
 
         self.original_auth = ""
+        self.database_url = ""
         self.repository_id: int | None = None
         self.repository_full_name: str | None = None
         self.project_name: str | None = None
@@ -197,6 +202,63 @@ class SoftwareOrchestratorRun:
         self.codex_home.mkdir(parents=True, mode=0o700, exist_ok=True)
         os.chmod(self.codex_home, 0o700)
         self._atomic_secret_write(self.codex_home / "auth.json", value)
+
+    def install_database_credentials(self) -> None:
+        parameter_names = {
+            field: f"{self.database_parameter_prefix}/{suffix}"
+            for field, suffix in (
+                ("host", "host"),
+                ("port", "port"),
+                ("database_name", "database-name"),
+                ("username", "username"),
+                ("password", "password"),
+            )
+        }
+        response = self.ssm.get_parameters(
+            Names=list(parameter_names.values()),
+            WithDecryption=True,
+        )
+        invalid_parameters = response.get("InvalidParameters", [])
+        if invalid_parameters:
+            raise RuntimeError("one or more PostgreSQL parameters do not exist")
+
+        parameters = {
+            item.get("Name"): item.get("Value")
+            for item in response.get("Parameters", [])
+            if isinstance(item, dict)
+        }
+        missing_fields = [
+            field
+            for field, name in parameter_names.items()
+            if not isinstance(parameters.get(name), str) or not parameters[name]
+        ]
+        if missing_fields:
+            raise RuntimeError(
+                "PostgreSQL parameters are missing required fields: "
+                + ", ".join(sorted(missing_fields))
+            )
+
+        host = parameters[parameter_names["host"]].strip()
+        port = parameters[parameter_names["port"]].strip()
+        database_name = parameters[parameter_names["database_name"]].strip()
+        username = parameters[parameter_names["username"]].strip()
+        password = parameters[parameter_names["password"]]
+        if not re.fullmatch(r"[A-Za-z0-9.-]+", host):
+            raise RuntimeError("the PostgreSQL host parameter is invalid")
+        if not port.isdigit() or not 1 <= int(port) <= 65535:
+            raise RuntimeError("the PostgreSQL port parameter is invalid")
+        if not database_name or not username:
+            raise RuntimeError("the PostgreSQL database name and username are required")
+
+        self.database_url = (
+            f"postgresql://{quote(username, safe='')}:{quote(password, safe='')}@"
+            f"{host}:{port}/{quote(database_name, safe='')}?sslmode=require"
+        )
+        self._atomic_secret_write(self.database_url_file, self.database_url)
+
+    def clear_database_credentials(self) -> None:
+        self.database_url = ""
+        self.database_url_file.unlink(missing_ok=True)
 
     @staticmethod
     def _atomic_secret_write(destination: Path, value: str) -> None:
@@ -357,6 +419,8 @@ developer_instructions = {toml_string(developer_instructions)}
         os.chmod(destination, 0o600)
 
     def codex_environment(self) -> dict[str, str]:
+        if not self.database_url or not self.database_url_file.is_file():
+            raise RuntimeError("PostgreSQL credentials were not installed")
         inherited_names = (
             "PATH",
             "HOME",
@@ -375,6 +439,8 @@ developer_instructions = {toml_string(developer_instructions)}
                 "AWS_REGION": self.region,
                 "AWS_EC2_METADATA_DISABLED": "true",
                 "CODEX_HOME": str(self.codex_home),
+                "DATABASE_URL": self.database_url,
+                "DATABASE_URL_FILE": str(self.database_url_file),
                 "GIT_TERMINAL_PROMPT": "0",
                 "GITHUB_TOKEN_BROKER_FUNCTION_NAME": self.token_broker_function,
                 "PROJECT_CREDENTIALS_BROKER_FUNCTION_NAME": self.project_broker_function,
@@ -408,6 +474,10 @@ developer_instructions = {toml_string(developer_instructions)}
             "remotes, request credentials, print credentials, or attempt to access any other "
             "repository. No subagent tools are configured for this runner. Inspect the existing "
             "project before editing, implement the user's task, and run the relevant tests. "
+            "A PostgreSQL DATABASE_URL is available in the process environment. You may use "
+            "the configured database to create or alter tables and to read or write data as "
+            "needed for the user's task. Never print, log, commit, or copy DATABASE_URL or its "
+            "credentials into repository files or artifacts. "
             + (
                 f"A persistent project workspace is available at {self.project_s3_uri}. "
                 "The AWS environment is already configured with short-lived credentials that "
@@ -713,6 +783,15 @@ def main() -> int:
             "Codex auth secret loaded and auth.json materialized",
         )
         run.telemetry.record(
+            "database_credentials_load_started",
+            "loading PostgreSQL connection credentials",
+        )
+        run.install_database_credentials()
+        run.telemetry.record(
+            "database_credentials_load_finished",
+            "PostgreSQL connection credentials installed for the software-builder runtime",
+        )
+        run.telemetry.record(
             "repository_checkout_started",
             "requesting the assigned repository and checking it out",
         )
@@ -822,6 +901,12 @@ def main() -> int:
             except Exception:
                 LOG.exception("could not upload software-builder failure marker")
         return 1
+    finally:
+        if run is not None:
+            try:
+                run.clear_database_credentials()
+            except Exception:
+                LOG.exception("could not remove local PostgreSQL credentials")
 
 
 if __name__ == "__main__":

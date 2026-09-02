@@ -584,6 +584,15 @@ resource "aws_iam_role_policy" "software_builder_orchestrator" {
         Resource = "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.codex_auth_ssm_parameter_name}"
       },
       {
+        Sid    = "ReadPostgresqlCredentials"
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParameters"
+        ]
+        Resource = "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.postgresql_ssm_parameter_prefix}/*"
+      },
+      {
         Sid      = "ListAgentWorkspace"
         Effect   = "Allow"
         Action   = "s3:ListBucket"

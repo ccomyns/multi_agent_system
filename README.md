@@ -389,9 +389,24 @@ untrusted logs.
 A caller needs `ssm:GetParameters` (or `ssm:GetParameter` for individual
 lookups) for those paths. Retrieving the SecureString with `--with-decryption`
 also requires permission to decrypt it. The parameter uses the account's
-standard SSM encryption key. The repository's agent roles are not automatically
-granted database-credential access; attach this narrowly scoped access only to
-the agents or applications that should connect.
+standard SSM encryption key. The software-builder orchestrator role has read
+access to this exact parameter hierarchy; other runtime roles do not.
+
+At launch, the trusted software-builder runner retrieves all five parameters,
+constructs a URL-encoded `DATABASE_URL`, and writes it to a mode-`0600` runtime
+file outside the checked-out repository. Codex receives the URL in its process
+environment and instructions that it may create tables and read or write data,
+but must never print, log, commit, or copy the credentials into artifacts. The
+runtime file is deleted when the runner exits. A dedicated client security
+group allows only software-builder orchestrators to initiate PostgreSQL
+connections to the RDS security group. No database settings or credentials
+belong in the admin console's `.env.local` file.
+
+Public network reachability does not bypass PostgreSQL authentication. Clients
+must still supply a valid database username and password, and PostgreSQL
+permissions determine which SQL operations they may perform. IAM database
+authentication is disabled because this PoC uses the generated PostgreSQL
+credentials stored in Parameter Store instead.
 
 The following example retrieves all fields in one API call and constructs a
 URL-encoded PostgreSQL `DATABASE_URL` without writing a plaintext configuration

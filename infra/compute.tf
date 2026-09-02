@@ -75,6 +75,7 @@ locals {
 
     cat >> /etc/multi-agent/orchestrator.env <<ENV
     PROJECT_CREDENTIALS_BROKER_FUNCTION_NAME=${aws_lambda_function.project_credentials_broker.function_name}
+    POSTGRESQL_SSM_PARAMETER_PREFIX=${local.postgresql_ssm_parameter_prefix}
     RUNTIME_ARTIFACT_BUCKET=${aws_s3_bucket.agent_workspace.id}
     RUNTIME_ARTIFACT_BUCKET_OWNER=${data.aws_caller_identity.current.account_id}
     ORCHESTRATOR_RUNTIME_NAME=software-builder
@@ -163,8 +164,11 @@ resource "aws_launch_template" "software_builder_orchestrator" {
     associate_public_ip_address = true
     delete_on_termination       = true
     device_index                = 0
-    security_groups             = [aws_security_group.instances.id]
-    subnet_id                   = aws_subnet.public.id
+    security_groups = [
+      aws_security_group.instances.id,
+      aws_security_group.software_builder_database_client.id,
+    ]
+    subnet_id = aws_subnet.public.id
   }
 
   metadata_options {
