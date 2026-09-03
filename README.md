@@ -350,7 +350,14 @@ grants `ssm:GetParameter` only for that exact path. Parameters encrypted with a
 customer-managed KMS key also require an explicit `kms:Decrypt` grant, which is
 not configured by default.
 
-The function exposes two invocation actions for the forthcoming MCP server.
+The software-builder runtime exposes a no-argument `publish_site` MCP tool. It
+requires a clean working tree, derives the current branch and commit, verifies
+that exact commit on `origin`, and then uses the function's two invocation
+actions. The MCP launcher starts with an empty environment and forwards only
+its AWS region, broker function names, trusted job/instance identity, and
+repository path. In particular, the database URL and Codex authentication are
+not forwarded in the publisher subprocess environment.
+
 Publication creates or validates a Vercel project linked to the job's trusted
 GitHub repository, then deploys the exact pushed commit to production:
 

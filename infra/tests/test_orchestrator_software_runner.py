@@ -216,7 +216,9 @@ class SoftwareRunnerSeparationTests(unittest.TestCase):
         self.assertNotIn("from orchestrator_runner", source)
         self.assertNotIn("import orchestrator_runner", source)
         self.assertNotIn("SPAWN_AGENT_MCP_COMMAND", source)
-        self.assertNotIn("[mcp_servers.", source)
+        self.assertNotIn("[mcp_servers.subagent_manager]", source)
+        self.assertNotIn("tools.spawn_agent", source)
+        self.assertIn("[mcp_servers.vercel_publisher]", source)
         self.assertNotIn("final_result.json", source)
 
     def test_systemd_starts_the_trusted_dispatcher(self) -> None:
@@ -542,6 +544,7 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
         run.orchestrator_model = "gpt-5.6-terra"
         run.token_broker_function = "github-token-broker"
         run.project_broker_function = "project-credentials-broker"
+        run.vercel_publisher_function = "vercel-publisher"
         run.git_author_name = "Cody C"
         run.git_author_email = "123456+cody@example.invalid"
         run.job_root = root / "software-job"
@@ -556,6 +559,8 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
         run.credential_helper.write_text("# helper\n", encoding="utf-8")
         run.project_credential_process = root / "software_project_credentials.py"
         run.project_credential_process.write_text("# process\n", encoding="utf-8")
+        run.vercel_mcp_command = root / "vercel-publisher-mcp"
+        run.vercel_mcp_command.write_text("#!/bin/bash\n", encoding="utf-8")
         run.project_aws_config = run.codex_home / "project-aws-config"
         run.database_url_file = run.codex_home / "database-url"
         run.bootstrap_log = root / "logs" / "bootstrap.log"
@@ -762,6 +767,10 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
                 environment["GITHUB_TOKEN_BROKER_FUNCTION_NAME"],
                 run.token_broker_function,
             )
+            self.assertEqual(
+                environment["VERCEL_PUBLISHER_FUNCTION_NAME"],
+                run.vercel_publisher_function,
+            )
             self.assertEqual(environment["AWS_EC2_METADATA_DISABLED"], "true")
             self.assertEqual(environment["DATABASE_URL"], run.database_url)
             self.assertEqual(environment["GIT_AUTHOR_NAME"], run.git_author_name)
@@ -781,9 +790,16 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
             self.assertIn("push the current branch to origin", config)
             self.assertIn("leave the working tree clean", config)
             self.assertIn("PostgreSQL DATABASE_URL is available", config)
+            self.assertIn("[mcp_servers.vercel_publisher]", config)
+            self.assertIn("[mcp_servers.vercel_publisher.tools.publish_site]", config)
+            self.assertIn('command = "/bin/bash"', config)
+            self.assertIn(str(run.vercel_mcp_command), config)
+            mcp_config = config.split("[mcp_servers.vercel_publisher]", 1)[1]
+            self.assertIn('"VERCEL_PUBLISHER_FUNCTION_NAME"', mcp_config)
+            self.assertIn('"GITHUB_TOKEN_BROKER_FUNCTION_NAME"', mcp_config)
+            self.assertNotIn('"DATABASE_URL"', mcp_config)
             self.assertNotIn(run.database_url, config)
             self.assertNotIn("[sandbox_workspace_write]", config)
-            self.assertNotIn("[mcp_servers.", config)
 
     def test_project_workspace_uses_refreshable_scoped_aws_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

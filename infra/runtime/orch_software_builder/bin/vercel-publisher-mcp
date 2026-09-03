@@ -1,0 +1,17 @@
+#!/bin/bash
+set -euo pipefail
+
+runtime_bin_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+exec /usr/bin/env -i \
+  PATH="/opt/multi-agent/venv/bin:/usr/local/bin:/usr/bin:/bin" \
+  HOME="/var/lib/multi-agent" \
+  LANG="C.UTF-8" \
+  AWS_REGION="$AWS_REGION" \
+  AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-$AWS_REGION}" \
+  GITHUB_TOKEN_BROKER_FUNCTION_NAME="$GITHUB_TOKEN_BROKER_FUNCTION_NAME" \
+  JOB_ID="$JOB_ID" \
+  ORCHESTRATOR_INSTANCE_ID="$ORCHESTRATOR_INSTANCE_ID" \
+  SOFTWARE_BUILDER_REPOSITORY_ROOT="$SOFTWARE_BUILDER_REPOSITORY_ROOT" \
+  VERCEL_PUBLISHER_FUNCTION_NAME="$VERCEL_PUBLISHER_FUNCTION_NAME" \
+  /opt/multi-agent/venv/bin/python \
+  "$runtime_bin_dir/vercel_publisher_mcp.py"
