@@ -91,6 +91,34 @@ variable "github_writer_private_key_ssm_parameter_name" {
   }
 }
 
+variable "software_builder_git_author_name" {
+  description = "Git author name applied to commits created by software-builder jobs so Vercel can associate private-repository commits with a team member."
+  type        = string
+
+  validation {
+    condition = (
+      length(var.software_builder_git_author_name) >= 1 &&
+      length(var.software_builder_git_author_name) <= 100 &&
+      can(regex("^[A-Za-z0-9][A-Za-z0-9 .'-]*$", var.software_builder_git_author_name))
+    )
+    error_message = "software_builder_git_author_name must be 1-100 characters and contain only letters, numbers, spaces, periods, apostrophes, or hyphens."
+  }
+}
+
+variable "software_builder_git_author_email" {
+  description = "Verified email associated with the Vercel team member's connected GitHub account; prefer the GitHub no-reply address."
+  type        = string
+
+  validation {
+    condition = (
+      length(var.software_builder_git_author_email) >= 3 &&
+      length(var.software_builder_git_author_email) <= 254 &&
+      can(regex("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$", var.software_builder_git_author_email))
+    )
+    error_message = "software_builder_git_author_email must be a valid email address associated with the GitHub account connected to Vercel."
+  }
+}
+
 variable "orchestrator_model" {
   description = "Codex model used by the real orchestrator runner."
   type        = string

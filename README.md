@@ -263,9 +263,11 @@ is the broker role. The orchestrator role can invoke the broker but has no
 access to the assignment table, PEM parameter, or KMS key. Subagents have none
 of those permissions.
 
-Copy the non-secret example variables and set the writer App's Client ID. An
-App ID, client secret, installation ID, or PEM contents do not belong in this
-file:
+Copy the non-secret example variables, set the writer App's Client ID, and set
+the software builder's Git author name and verified GitHub email. Prefer the
+personal account's GitHub no-reply email when that account is connected to the
+Vercel Pro team. An App ID, client secret, installation ID, or PEM contents do
+not belong in this file:
 
 ```bash
 cd infra
@@ -316,6 +318,15 @@ push after the first token expires without storing the token in the remote URL,
 repository, environment file, or Codex configuration. Before the runner marks a
 job complete, it requires a clean working tree and verifies that the current
 commit exists on the matching branch at `origin`.
+
+At EC2 startup, Terraform writes `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL` into
+the software-builder-only systemd environment file. The runner explicitly
+passes them to Codex, so ordinary `git commit` commands use the configured
+GitHub identity as the author. Repository-local `user.name` and `user.email`
+remain `cody-software-builder[bot]`, preserving the bot as the committer and the
+GitHub App installation token as the push credential. This split lets Vercel
+associate private-organization commits with the connected Pro team member
+without exposing that member's GitHub credentials to the builder.
 
 Software-builder Codex currently runs with `danger-full-access` and approval
 prompts disabled. This gives its shell commands outbound network access and

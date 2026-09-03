@@ -98,6 +98,8 @@ class SoftwareOrchestratorRun:
         self.project_broker_function = required_env(
             "PROJECT_CREDENTIALS_BROKER_FUNCTION_NAME"
         )
+        self.git_author_name = required_env("GIT_AUTHOR_NAME")
+        self.git_author_email = required_env("GIT_AUTHOR_EMAIL")
 
         self.job_pk = f"JOB#{self.job_id}"
         self.job_root = Path("/var/lib/multi-agent/software-jobs") / self.job_id
@@ -441,6 +443,8 @@ developer_instructions = {toml_string(developer_instructions)}
                 "CODEX_HOME": str(self.codex_home),
                 "DATABASE_URL": self.database_url,
                 "DATABASE_URL_FILE": str(self.database_url_file),
+                "GIT_AUTHOR_NAME": self.git_author_name,
+                "GIT_AUTHOR_EMAIL": self.git_author_email,
                 "GIT_TERMINAL_PROMPT": "0",
                 "GITHUB_TOKEN_BROKER_FUNCTION_NAME": self.token_broker_function,
                 "PROJECT_CREDENTIALS_BROKER_FUNCTION_NAME": self.project_broker_function,

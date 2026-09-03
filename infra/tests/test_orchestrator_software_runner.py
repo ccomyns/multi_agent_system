@@ -234,6 +234,24 @@ class SoftwareRunnerSeparationTests(unittest.TestCase):
         self.assertIn("apt-get install -y git", images)
         self.assertIn('"git --version"', images)
 
+    def test_software_builder_git_author_is_set_at_instance_startup(self) -> None:
+        infra = Path(__file__).resolve().parents[1]
+        compute = (infra / "compute.tf").read_text(encoding="utf-8")
+        data_mining_bootstrap, software_builder_bootstrap = compute.split(
+            "software_builder_orchestrator_bootstrap =", 1
+        )
+
+        self.assertNotIn("GIT_AUTHOR_NAME=", data_mining_bootstrap)
+        self.assertNotIn("GIT_AUTHOR_EMAIL=", data_mining_bootstrap)
+        self.assertIn(
+            "GIT_AUTHOR_NAME=${jsonencode(var.software_builder_git_author_name)}",
+            software_builder_bootstrap,
+        )
+        self.assertIn(
+            "GIT_AUTHOR_EMAIL=${jsonencode(var.software_builder_git_author_email)}",
+            software_builder_bootstrap,
+        )
+
     def test_software_builder_database_access_is_scoped_to_its_role_and_network(self) -> None:
         infra = Path(__file__).resolve().parents[1]
         compute = (infra / "compute.tf").read_text(encoding="utf-8")
@@ -524,6 +542,8 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
         run.orchestrator_model = "gpt-5.6-terra"
         run.token_broker_function = "github-token-broker"
         run.project_broker_function = "project-credentials-broker"
+        run.git_author_name = "Cody C"
+        run.git_author_email = "123456+cody@example.invalid"
         run.job_root = root / "software-job"
         run.repository_root = run.job_root / "repository"
         run.codex_home = root / "software-codex-home"
@@ -744,6 +764,8 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
             )
             self.assertEqual(environment["AWS_EC2_METADATA_DISABLED"], "true")
             self.assertEqual(environment["DATABASE_URL"], run.database_url)
+            self.assertEqual(environment["GIT_AUTHOR_NAME"], run.git_author_name)
+            self.assertEqual(environment["GIT_AUTHOR_EMAIL"], run.git_author_email)
             self.assertEqual(
                 environment["DATABASE_URL_FILE"],
                 str(run.database_url_file),

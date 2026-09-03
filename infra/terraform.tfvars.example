@@ -3,5 +3,10 @@
 github_organization        = "mas-workspace"
 github_writer_app_client_id = "Iv_REPLACE_WITH_WRITER_APP_CLIENT_ID"
 
+# Non-secret Git author metadata. Use an email GitHub associates with the
+# personal account connected to the Vercel Pro team, preferably its no-reply address.
+software_builder_git_author_name  = "REPLACE_WITH_GITHUB_DISPLAY_NAME"
+software_builder_git_author_email = "REPLACE_WITH_GITHUB_NOREPLY_EMAIL"
+
 # Optional. The default is /<project_name>/github/writer-private-key.
 # github_writer_private_key_ssm_parameter_name = "/financial-research-agents/github/writer-private-key"

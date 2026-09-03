@@ -76,6 +76,8 @@ locals {
     cat >> /etc/multi-agent/orchestrator.env <<ENV
     PROJECT_CREDENTIALS_BROKER_FUNCTION_NAME=${aws_lambda_function.project_credentials_broker.function_name}
     POSTGRESQL_SSM_PARAMETER_PREFIX=${local.postgresql_ssm_parameter_prefix}
+    GIT_AUTHOR_NAME=${jsonencode(var.software_builder_git_author_name)}
+    GIT_AUTHOR_EMAIL=${jsonencode(var.software_builder_git_author_email)}
     RUNTIME_ARTIFACT_BUCKET=${aws_s3_bucket.agent_workspace.id}
     RUNTIME_ARTIFACT_BUCKET_OWNER=${data.aws_caller_identity.current.account_id}
     ORCHESTRATOR_RUNTIME_NAME=software-builder
