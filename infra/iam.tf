@@ -257,6 +257,58 @@ resource "aws_iam_role_policy" "project_credentials_broker" {
   })
 }
 
+// This role is the only runtime identity allowed to read the Vercel access
+// token. The software-builder orchestrator can invoke the publisher but cannot
+// read the token parameter or the trusted repository-assignment table.
+resource "aws_iam_role" "vercel_publisher" {
+  name = "${var.project_name}-vercel-publisher"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "vercel_publisher_logs" {
+  role       = aws_iam_role.vercel_publisher.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy" "vercel_publisher" {
+  name = "validate-assignment-and-publish-to-vercel"
+  role = aws_iam_role.vercel_publisher.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "ReadActiveSoftwareJob"
+        Effect   = "Allow"
+        Action   = "dynamodb:GetItem"
+        Resource = aws_dynamodb_table.jobs.arn
+      },
+      {
+        Sid      = "ReadTrustedRepositoryAssignment"
+        Effect   = "Allow"
+        Action   = "dynamodb:GetItem"
+        Resource = aws_dynamodb_table.github_repository_assignments.arn
+      },
+      {
+        Sid      = "ReadVercelAccessToken"
+        Effect   = "Allow"
+        Action   = "ssm:GetParameter"
+        Resource = local.vercel_access_token_ssm_parameter_arn
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role" "software_builder_project_workspace" {
   name                 = "${var.project_name}-software-builder-project-workspace"
   max_session_duration = 3600
@@ -560,7 +612,8 @@ resource "aws_iam_role_policy" "software_builder_orchestrator" {
         Action = "lambda:InvokeFunction"
         Resource = [
           aws_lambda_function.github_token_broker.arn,
-          aws_lambda_function.project_credentials_broker.arn
+          aws_lambda_function.project_credentials_broker.arn,
+          aws_lambda_function.vercel_publisher.arn
         ]
       },
       {

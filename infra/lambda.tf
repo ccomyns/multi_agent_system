@@ -180,6 +180,47 @@ resource "aws_lambda_function" "project_credentials_broker" {
   ]
 }
 
+data "archive_file" "vercel_publisher" {
+  type        = "zip"
+  source_file = "${path.module}/../src/vercel_publisher/handler.py"
+  output_path = "${path.module}/vercel-publisher.zip"
+}
+
+resource "aws_cloudwatch_log_group" "vercel_publisher" {
+  name              = "/aws/lambda/${var.project_name}-vercel-publisher"
+  retention_in_days = 14
+}
+
+resource "aws_lambda_function" "vercel_publisher" {
+  function_name = "${var.project_name}-vercel-publisher"
+  description   = "Publishes the exact Git commit assigned to an active software-builder job into the configured Vercel team."
+  role          = aws_iam_role.vercel_publisher.arn
+  handler       = "handler.lambda_handler"
+  runtime       = "python3.13"
+  architectures = ["arm64"]
+  timeout       = 60
+  memory_size   = 256
+
+  filename         = data.archive_file.vercel_publisher.output_path
+  source_code_hash = data.archive_file.vercel_publisher.output_base64sha256
+
+  environment {
+    variables = {
+      GITHUB_ORGANIZATION                      = var.github_organization
+      GITHUB_REPOSITORY_ASSIGNMENTS_TABLE_NAME = aws_dynamodb_table.github_repository_assignments.name
+      JOBS_TABLE_NAME                          = aws_dynamodb_table.jobs.name
+      VERCEL_ACCESS_TOKEN_SSM_PARAMETER_NAME   = local.vercel_access_token_ssm_parameter_name
+      VERCEL_TEAM_ID                           = var.vercel_team_id
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.vercel_publisher,
+    aws_iam_role_policy.vercel_publisher,
+    aws_iam_role_policy_attachment.vercel_publisher_logs,
+  ]
+}
+
 resource "aws_cloudwatch_event_rule" "subagent_terminated" {
   name        = "${var.project_name}-subagent-terminated"
   description = "Reconcile EC2 instance termination with active subagent state."

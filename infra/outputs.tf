@@ -99,6 +99,16 @@ output "project_credentials_broker_function_name" {
   value       = aws_lambda_function.project_credentials_broker.function_name
 }
 
+output "vercel_publisher_function_name" {
+  description = "Lambda function invoked by the software-builder Vercel MCP server."
+  value       = aws_lambda_function.vercel_publisher.function_name
+}
+
+output "vercel_access_token_ssm_parameter_name" {
+  description = "Out-of-band SSM SecureString name containing the Vercel access token."
+  value       = local.vercel_access_token_ssm_parameter_name
+}
+
 output "software_builder_project_workspace_role_arn" {
   description = "Session-tagged IAM role used for access to one assigned global-memory project."
   value       = aws_iam_role.software_builder_project_workspace.arn

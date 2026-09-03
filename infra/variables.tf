@@ -119,6 +119,31 @@ variable "software_builder_git_author_email" {
   }
 }
 
+variable "vercel_team_id" {
+  description = "Vercel Pro team ID that owns software-builder projects and deployments."
+  type        = string
+
+  validation {
+    condition     = can(regex("^team_[A-Za-z0-9]+$", var.vercel_team_id))
+    error_message = "vercel_team_id must be a Vercel team ID beginning with team_."
+  }
+}
+
+variable "vercel_access_token_ssm_parameter_name" {
+  description = "Name of the out-of-band SSM SecureString containing the Vercel access token. Null uses /<project_name>/vercel/access-token."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.vercel_access_token_ssm_parameter_name == null ||
+      can(regex("^/[A-Za-z0-9_./-]+$", var.vercel_access_token_ssm_parameter_name))
+    )
+    error_message = "vercel_access_token_ssm_parameter_name must be an absolute SSM parameter name beginning with /."
+  }
+}
+
 variable "orchestrator_model" {
   description = "Codex model used by the real orchestrator runner."
   type        = string

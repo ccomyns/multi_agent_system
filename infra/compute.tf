@@ -78,6 +78,7 @@ locals {
     POSTGRESQL_SSM_PARAMETER_PREFIX=${local.postgresql_ssm_parameter_prefix}
     GIT_AUTHOR_NAME=${jsonencode(var.software_builder_git_author_name)}
     GIT_AUTHOR_EMAIL=${jsonencode(var.software_builder_git_author_email)}
+    VERCEL_PUBLISHER_FUNCTION_NAME=${aws_lambda_function.vercel_publisher.function_name}
     RUNTIME_ARTIFACT_BUCKET=${aws_s3_bucket.agent_workspace.id}
     RUNTIME_ARTIFACT_BUCKET_OWNER=${data.aws_caller_identity.current.account_id}
     ORCHESTRATOR_RUNTIME_NAME=software-builder

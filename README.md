@@ -328,6 +328,63 @@ GitHub App installation token as the push credential. This split lets Vercel
 associate private-organization commits with the connected Pro team member
 without exposing that member's GitHub credentials to the builder.
 
+## Vercel publisher boundary
+
+Terraform defines a dedicated Vercel publisher Lambda and IAM role. The
+software-builder EC2 role may invoke the function, but only the Lambda may read
+the Vercel access token from SSM. The token value is never managed by Terraform
+and is not placed in the builder's environment.
+
+Set the following non-secret inputs in `infra/terraform.tfvars` (Terraform does
+not load `admin/.env.local`):
+
+```hcl
+vercel_team_id = "team_REPLACE_WITH_VERCEL_TEAM_ID"
+vercel_access_token_ssm_parameter_name = "/financial-research-agents/vercel/access-token"
+```
+
+The parameter-name input is optional when the token uses the default path
+`/<project_name>/vercel/access-token`. The Lambda expects an existing SSM
+`SecureString`; it reads it with decryption at invocation time. Its IAM policy
+grants `ssm:GetParameter` only for that exact path. Parameters encrypted with a
+customer-managed KMS key also require an explicit `kms:Decrypt` grant, which is
+not configured by default.
+
+The function exposes two invocation actions for the forthcoming MCP server.
+Publication creates or validates a Vercel project linked to the job's trusted
+GitHub repository, then deploys the exact pushed commit to production:
+
+```json
+{
+  "action": "publish",
+  "job_id": "job_abcd_12345678",
+  "orchestrator_instance_id": "i-1234567890abcdef0",
+  "branch": "vercel-integration",
+  "commit_sha": "0123456789abcdef0123456789abcdef01234567"
+}
+```
+
+Deployment state is polled with the same trusted commit identity plus the
+returned deployment ID:
+
+```json
+{
+  "action": "status",
+  "job_id": "job_abcd_12345678",
+  "orchestrator_instance_id": "i-1234567890abcdef0",
+  "branch": "vercel-integration",
+  "commit_sha": "0123456789abcdef0123456789abcdef01234567",
+  "deployment_id": "dpl_REPLACE_WITH_DEPLOYMENT_ID"
+}
+```
+
+Repository, Vercel team/project, token, and environment-variable fields are
+intentionally rejected. Those scopes come from Terraform and the immutable
+repository assignment for the active software-builder job. A successful status
+response reports the production alias as `public_url` once Vercel assigns it;
+the unique `deployment_url` may remain protected under the team's Deployment
+Protection settings.
+
 Software-builder Codex currently runs with `danger-full-access` and approval
 prompts disabled. This gives its shell commands outbound network access and
 write access to `.git`, allowing Codex itself to install dependencies, commit,
