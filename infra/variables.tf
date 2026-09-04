@@ -203,7 +203,7 @@ variable "orchestrator_image_version" {
 variable "software_builder_orchestrator_image_version" {
   description = "Semantic version assigned to the independently built software-builder base AMI and its dependency component. Runner-only changes do not require incrementing it."
   type        = string
-  default     = "1.0.1"
+  default     = "1.0.2"
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.software_builder_orchestrator_image_version))

@@ -18,12 +18,7 @@ export function jobTypeLabel(type: JobType) {
 }
 
 export function jobDetailHref(job: Pick<Job, "jobId" | "typeOfJob">) {
-  switch (job.typeOfJob) {
-    case "data_mining":
-      return `/jobs/${encodeURIComponent(job.jobId)}`;
-    case "software_builder":
-      return "/software";
-  }
+  return `/jobs/${encodeURIComponent(job.jobId)}`;
 }
 
 export type Job = {
@@ -37,6 +32,66 @@ export type Job = {
   launchedAt: string | null;
   finishedAt: string | null;
 };
+
+export type PublishedWebsite = {
+  provider: "vercel";
+  url: string;
+  deploymentId: string;
+  projectId: string;
+  projectName: string;
+  branch: string;
+  commitSha: string;
+  publishedAt: string;
+};
+
+function nonemptyString(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+export function parsePublishedWebsite(value: unknown): PublishedWebsite | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const url = nonemptyString(record, "url");
+  try {
+    const parsedUrl = url ? new URL(url) : null;
+    if (!parsedUrl || parsedUrl.protocol !== "https:" || parsedUrl.username || parsedUrl.password) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  const deploymentId = nonemptyString(record, "deployment_id");
+  const projectId = nonemptyString(record, "project_id");
+  const projectName = nonemptyString(record, "project_name");
+  const branch = nonemptyString(record, "branch");
+  const commitSha = nonemptyString(record, "commit_sha");
+  const publishedAt = nonemptyString(record, "published_at");
+  if (
+    record.provider !== "vercel" ||
+    !url ||
+    !deploymentId ||
+    !projectId ||
+    !projectName ||
+    !branch ||
+    !commitSha ||
+    !publishedAt
+  ) {
+    return null;
+  }
+  return {
+    provider: "vercel",
+    url,
+    deploymentId,
+    projectId,
+    projectName,
+    branch,
+    commitSha,
+    publishedAt,
+  };
+}
 
 export type JobsSnapshot = {
   jobs: Job[];

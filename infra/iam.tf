@@ -288,9 +288,12 @@ resource "aws_iam_role_policy" "vercel_publisher" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "ReadActiveSoftwareJob"
-        Effect   = "Allow"
-        Action   = "dynamodb:GetItem"
+        Sid    = "ReadActiveSoftwareJob"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:UpdateItem"
+        ]
         Resource = aws_dynamodb_table.jobs.arn
       },
       {

@@ -8,6 +8,7 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Sidebar } from "@/components/sidebar";
@@ -28,7 +29,7 @@ import {
   projectNameError,
   type ProjectSummary,
 } from "@/lib/project-uploads";
-import { requestJobLaunch } from "@/lib/jobs";
+import { jobDetailHref, requestJobLaunch } from "@/lib/jobs";
 import { useJobs } from "@/lib/use-jobs";
 
 interface PendingRepository {
@@ -53,6 +54,7 @@ function responseError(value: unknown, fallback: string) {
 }
 
 export default function SoftwareBuilderPage() {
+  const router = useRouter();
   const [idea, setIdea] = useState("");
   const [contextOpen, setContextOpen] = useState(false);
   const [repositoryPickerOpen, setRepositoryPickerOpen] = useState(false);
@@ -90,7 +92,6 @@ export default function SoftwareBuilderPage() {
     activeJob,
     error: jobsError,
     hydrated: jobsHydrated,
-    refresh: refreshJobs,
   } = useJobs();
 
   const closeCreateRepository = useCallback(() => {
@@ -429,7 +430,7 @@ export default function SoftwareBuilderPage() {
       setSubmitNotice(
         `${job.jobId} launched for ${repository.fullName}.`,
       );
-      await refreshJobs();
+      router.push(jobDetailHref(job));
     } catch (caught) {
       const createdResources = [
         createdRepositoryName ? `Repository ${createdRepositoryName}` : null,

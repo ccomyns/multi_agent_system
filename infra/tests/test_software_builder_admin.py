@@ -57,6 +57,32 @@ class SoftwareBuilderAdminTests(unittest.TestCase):
         self.assertIn('ContentType: "text/markdown; charset=utf-8"', route)
         self.assertIn('IfNoneMatch: "*"', route)
 
+    def test_software_job_navigates_to_the_shared_job_monitor(self) -> None:
+        page = (ROOT / "admin/app/software/page.tsx").read_text(encoding="utf-8")
+        jobs = (ROOT / "admin/lib/jobs.ts").read_text(encoding="utf-8")
+        monitor_route = (
+            ROOT / "admin/app/api/jobs/[jobId]/monitor/route.ts"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("router.push(jobDetailHref(job))", page)
+        self.assertIn("return `/jobs/${encodeURIComponent(job.jobId)}`", jobs)
+        self.assertNotIn("does not use the data-mining monitor", monitor_route)
+        self.assertIn('job.typeOfJob === "data_mining"', monitor_route)
+
+    def test_software_orchestrator_exposes_the_recorded_website(self) -> None:
+        telemetry_route = (
+            ROOT / "admin/app/api/jobs/[jobId]/telemetry/route.ts"
+        ).read_text(encoding="utf-8")
+        detail = (
+            ROOT / "admin/components/agent-telemetry-detail.tsx"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("parsePublishedWebsite(job.published_website)", telemetry_route)
+        self.assertNotIn("does not use agent telemetry", telemetry_route)
+        self.assertIn('payload?.jobType === "software_builder"', detail)
+        self.assertIn("href={payload.publishedWebsite.url}", detail)
+        self.assertIn("noopener noreferrer", detail)
+
 
 if __name__ == "__main__":
     unittest.main()

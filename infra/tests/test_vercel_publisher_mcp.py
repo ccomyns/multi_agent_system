@@ -279,6 +279,19 @@ class VercelPublisherMcpTests(unittest.TestCase):
 
 
 class VercelPublisherMcpInfrastructureTests(unittest.TestCase):
+    def test_software_builder_image_installs_and_validates_mcp(self) -> None:
+        images = (ROOT / "infra/images.tf").read_text(encoding="utf-8")
+        software_component = images.split(
+            'resource "aws_imagebuilder_component" "software_builder_base_runtime"',
+            1,
+        )[1].split(
+            'resource "aws_imagebuilder_component" "subagent_browser_tools"',
+            1,
+        )[0]
+
+        self.assertIn("--upgrade pip boto3 'mcp>=1.27,<2'", software_component)
+        self.assertIn("from mcp.server.fastmcp import FastMCP", software_component)
+
     def test_launcher_passes_only_the_publisher_environment(self) -> None:
         launcher = (
             ROOT

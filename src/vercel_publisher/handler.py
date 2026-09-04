@@ -6,6 +6,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any
 from urllib import error as urllib_error
@@ -678,6 +679,55 @@ def _status(
     )
 
 
+def _record_published_website(
+    request: PublishRequest,
+    configuration: Configuration,
+    deployment: dict[str, Any],
+) -> None:
+    if deployment.get("ready_state") != "READY":
+        return
+    public_url = deployment.get("public_url")
+    if not isinstance(public_url, str):
+        return
+
+    published_at = datetime.now(timezone.utc).isoformat(
+        timespec="seconds"
+    ).replace("+00:00", "Z")
+    _client("dynamodb").update_item(
+        TableName=configuration.jobs_table,
+        Key={"pk": {"S": f"JOB#{request.job_id}"}},
+        UpdateExpression="SET published_website = :website",
+        ConditionExpression=(
+            "#job_id = :job_id AND #job_type = :job_type "
+            "AND #job_status = :running AND #instance_id = :instance_id"
+        ),
+        ExpressionAttributeNames={
+            "#job_id": "job_id",
+            "#job_type": "type_of_job",
+            "#job_status": "status",
+            "#instance_id": "orchestrator_instance_id",
+        },
+        ExpressionAttributeValues={
+            ":job_id": {"S": request.job_id},
+            ":job_type": {"S": "software_builder"},
+            ":running": {"S": "running"},
+            ":instance_id": {"S": request.instance_id},
+            ":website": {
+                "M": {
+                    "provider": {"S": "vercel"},
+                    "url": {"S": public_url},
+                    "deployment_id": {"S": deployment["id"]},
+                    "project_id": {"S": deployment["project_id"]},
+                    "project_name": {"S": deployment["project_name"]},
+                    "branch": {"S": deployment["branch"]},
+                    "commit_sha": {"S": deployment["commit_sha"]},
+                    "published_at": {"S": published_at},
+                }
+            },
+        },
+    )
+
+
 def lambda_handler(event: Any, _context: Any) -> dict[str, Any]:
     try:
         request = _parse_request(event)
@@ -688,6 +738,7 @@ def lambda_handler(event: Any, _context: Any) -> dict[str, Any]:
             deployment = _publish(request, configuration, repository, token)
         else:
             deployment = _status(request, configuration, repository, token)
+        _record_published_website(request, configuration, deployment)
         print(json.dumps({
             "event": "vercel_publication_request_succeeded",
             "action": request.action,

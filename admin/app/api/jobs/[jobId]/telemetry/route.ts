@@ -5,7 +5,12 @@ import { NextResponse } from "next/server";
 
 import { awsClientOptions } from "@/lib/aws";
 import type { AgentTelemetryResponse } from "@/lib/agent-telemetry";
-import { DEFAULT_JOB_TYPE, isJobType, JOB_ID_PATTERN } from "@/lib/jobs";
+import {
+  DEFAULT_JOB_TYPE,
+  isJobType,
+  JOB_ID_PATTERN,
+  parsePublishedWebsite,
+} from "@/lib/jobs";
 import {
   controlPlaneEvent,
   mergeTelemetryEvents,
@@ -51,9 +56,6 @@ export async function GET(
       return response({ error: "That job does not exist." }, { status: 404 });
     }
     const jobType = isJobType(job.type_of_job) ? job.type_of_job : DEFAULT_JOB_TYPE;
-    if (jobType !== "data_mining") {
-      return response({ error: "That job type does not use agent telemetry." }, { status: 409 });
-    }
 
     const telemetry = await readAgentTelemetry(
       s3,
@@ -64,6 +66,8 @@ export async function GET(
     const payload: AgentTelemetryResponse = {
       actorType: "orchestrator",
       agentId: null,
+      jobType,
+      publishedWebsite: parsePublishedWebsite(job.published_website),
       task: typeof job.original_task === "string" ? job.original_task : "Task unavailable",
       status: typeof job.status === "string" ? job.status : "unknown",
       isTerminal: terminal,

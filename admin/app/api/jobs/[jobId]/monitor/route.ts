@@ -329,17 +329,15 @@ export async function GET(
     if (!job) {
       return errorResponse("That job does not exist.", 404);
     }
-    if (job.typeOfJob !== "data_mining") {
-      return errorResponse("That job type does not use the data-mining monitor.", 409);
-    }
-
     const jobRecord = stored.Item as JobItem;
     const jobIsFinished = job.status === "completed" || job.status === "failed";
     const [ec2State, agentItems] = await Promise.all([
       jobIsFinished
         ? Promise.resolve(null)
         : describeOrchestrator(ec2, job.orchestratorInstanceId),
-      queryAgentItems(documents, config.stateTable, job.orchestratorInstanceId),
+      job.typeOfJob === "data_mining"
+        ? queryAgentItems(documents, config.stateTable, job.orchestratorInstanceId)
+        : Promise.resolve([]),
     ]);
     const subagents = buildSubagents(agentItems);
     const progress = progressFor(

@@ -225,6 +225,55 @@ class VercelPublisherHandlerTests(unittest.TestCase):
         self.assertRegex(name, r"^generated-site-[0-9a-f]{8}$")
         self.assertLessEqual(len(name), 100)
 
+    def test_ready_public_deployment_is_recorded_on_the_active_job(self) -> None:
+        dynamodb = Mock()
+        publisher._clients["dynamodb"] = dynamodb
+        deployment = {
+            "id": "dpl_abc123",
+            "ready_state": "READY",
+            "project_id": "prj_abc123",
+            "project_name": "generated-site",
+            "branch": self.request.branch,
+            "commit_sha": self.request.commit_sha,
+            "public_url": "https://generated-site.vercel.app",
+        }
+
+        publisher._record_published_website(
+            self.request,
+            self.configuration,
+            deployment,
+        )
+
+        update = dynamodb.update_item.call_args.kwargs
+        self.assertEqual(update["TableName"], self.configuration.jobs_table)
+        self.assertEqual(
+            update["Key"],
+            {"pk": {"S": f"JOB#{self.request.job_id}"}},
+        )
+        self.assertIn("#job_status = :running", update["ConditionExpression"])
+        website = update["ExpressionAttributeValues"][":website"]["M"]
+        self.assertEqual(
+            website["url"],
+            {"S": "https://generated-site.vercel.app"},
+        )
+        self.assertEqual(website["commit_sha"], {"S": self.request.commit_sha})
+        self.assertRegex(
+            website["published_at"]["S"],
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$",
+        )
+
+    def test_non_ready_deployment_is_not_recorded(self) -> None:
+        dynamodb = Mock()
+        publisher._clients["dynamodb"] = dynamodb
+
+        publisher._record_published_website(
+            self.request,
+            self.configuration,
+            {"ready_state": "BUILDING", "public_url": None},
+        )
+
+        dynamodb.update_item.assert_not_called()
+
 
 class VercelPublisherInfrastructureTests(unittest.TestCase):
     def test_lambda_receives_only_non_secret_vercel_configuration(self) -> None:
@@ -256,6 +305,7 @@ class VercelPublisherInfrastructureTests(unittest.TestCase):
         )[1].split('resource "aws_iam_role" "image_builder"', 1)[0]
 
         self.assertIn("local.vercel_access_token_ssm_parameter_arn", publisher_role)
+        self.assertIn('"dynamodb:UpdateItem"', publisher_role)
         self.assertIn("aws_lambda_function.vercel_publisher.arn", software_role)
         self.assertNotIn("vercel_access_token_ssm_parameter_arn", software_role)
 

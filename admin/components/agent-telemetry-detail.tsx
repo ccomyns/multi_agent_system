@@ -1,6 +1,13 @@
 "use client";
 
-import { ArrowLeft, Clock3, Database, RefreshCw, Upload } from "lucide-react";
+import {
+  ArrowLeft,
+  Clock3,
+  Database,
+  ExternalLink,
+  RefreshCw,
+  Upload,
+} from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
@@ -144,7 +151,12 @@ export function AgentTelemetryDetail({
   }, [refresh]);
 
   useEffect(() => {
-    if (view !== "result" || result !== null || resultError !== null) return;
+    if (
+      view !== "result" ||
+      payload?.jobType !== "data_mining" ||
+      result !== null ||
+      resultError !== null
+    ) return;
     const controller = new AbortController();
     fetchFinalResult(jobId, controller.signal)
       .then(setResult)
@@ -154,9 +166,10 @@ export function AgentTelemetryDetail({
         }
       });
     return () => controller.abort();
-  }, [jobId, result, resultError, view]);
+  }, [jobId, payload?.jobType, result, resultError, view]);
 
   const telemetry = payload?.telemetry ?? null;
+  const showingResult = view === "result" && payload?.jobType !== "software_builder";
   return (
     <div className="agent-detail-page">
       <Link className="data-mining-back-link" href={`/jobs/${encodeURIComponent(jobId)}`}>
@@ -175,22 +188,46 @@ export function AgentTelemetryDetail({
               <button className={view === "telemetry" ? "is-active" : ""} onClick={() => setView("telemetry")} type="button">
                 <Clock3 size={12} aria-hidden="true" /> Telemetry
               </button>
-              <button
-                className={view === "result" ? "is-active" : ""}
-                disabled={!payload?.isTerminal}
-                onClick={() => setView("result")}
-                type="button"
-              >
-                <Database size={12} aria-hidden="true" /> Final Result
-              </button>
-              <Link href={`/jobs/${encodeURIComponent(jobId)}/orchestrator/upload`}>
-                <Upload size={12} aria-hidden="true" /> Upload to Project
-              </Link>
+              {payload?.jobType === "data_mining" ? (
+                <>
+                  <button
+                    className={view === "result" ? "is-active" : ""}
+                    disabled={!payload.isTerminal}
+                    onClick={() => setView("result")}
+                    type="button"
+                  >
+                    <Database size={12} aria-hidden="true" /> Final Result
+                  </button>
+                  <Link href={`/jobs/${encodeURIComponent(jobId)}/orchestrator/upload`}>
+                    <Upload size={12} aria-hidden="true" /> Upload to Project
+                  </Link>
+                </>
+              ) : null}
+              {payload?.jobType === "software_builder" ? (
+                payload.publishedWebsite ? (
+                  <a
+                    href={payload.publishedWebsite.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={`Open ${payload.publishedWebsite.projectName}`}
+                  >
+                    <ExternalLink size={12} aria-hidden="true" /> Website
+                  </a>
+                ) : (
+                  <button
+                    disabled
+                    title="The Website link will become available after a successful Vercel publish."
+                    type="button"
+                  >
+                    <ExternalLink size={12} aria-hidden="true" /> Website
+                  </button>
+                )
+              ) : null}
             </div>
           ) : null}
         </header>
 
-        {view === "result" ? (
+        {showingResult ? (
           <div className="agent-detail-result">
             {resultError ? <div className="agent-detail-message agent-detail-error">{resultError}</div> :
               result === null ? <div className="agent-detail-message">Loading final_result.json…</div> : <DataMiningResultViewer response={result} />}

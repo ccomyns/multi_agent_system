@@ -316,7 +316,7 @@ resource "aws_imagebuilder_component" "software_builder_base_runtime" {
                     python3 -m venv /opt/multi-agent/venv
                   fi
                   /opt/multi-agent/venv/bin/pip install --no-cache-dir \
-                    --upgrade pip boto3
+                    --upgrade pip boto3 'mcp>=1.27,<2'
 
                   cat > /usr/local/bin/run-runtime-orchestrator <<'SCRIPT'
                   #!/bin/bash
@@ -425,7 +425,7 @@ resource "aws_imagebuilder_component" "software_builder_base_runtime" {
             inputs = {
               commands = [
                 "set -euo pipefail",
-                "/opt/multi-agent/venv/bin/python -c 'import boto3'",
+                "/opt/multi-agent/venv/bin/python -c 'import boto3; from mcp.server.fastmcp import FastMCP'",
                 "git --version",
                 "cd /var/lib/multi-agent && runuser -u multi-agent -- codex sandbox -- /bin/true",
                 "test -x /usr/local/bin/run-runtime-orchestrator",

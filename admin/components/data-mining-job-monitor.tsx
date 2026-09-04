@@ -11,7 +11,12 @@ import type {
   MonitoredSubagentStatus,
   OrchestratorProgress,
 } from "@/lib/job-monitor";
-import { DEFAULT_JOB_TYPE, jobTypeLabel, requestJobEnd } from "@/lib/jobs";
+import {
+  DEFAULT_JOB_TYPE,
+  jobTypeLabel,
+  requestJobEnd,
+  type JobType,
+} from "@/lib/jobs";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -21,6 +26,19 @@ const PROGRESS_LABELS: Record<OrchestratorProgress, string> = {
   coordinating_subagents: "Coordinating Subagents",
   done: "Done",
 };
+
+const SOFTWARE_PROGRESS_LABELS: Record<OrchestratorProgress, string> = {
+  launching_orchestrator: "Launching Software Builder",
+  making_plan: "Building Software",
+  coordinating_subagents: "Building Software",
+  done: "Done",
+};
+
+function progressLabel(progress: OrchestratorProgress, jobType: JobType) {
+  return jobType === "software_builder"
+    ? SOFTWARE_PROGRESS_LABELS[progress]
+    : PROGRESS_LABELS[progress];
+}
 
 const SUBAGENT_STATUS_LABELS: Record<MonitoredSubagentStatus, string> = {
   queued: "Queued",
@@ -205,7 +223,7 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
           <div className="orchestrator-progress-block">
             <div className="orchestrator-progress" aria-live="polite">
               <span className={`orchestrator-progress-dot progress-${progress}`} aria-hidden="true" />
-              {PROGRESS_LABELS[progress]}
+              {progressLabel(progress, jobType)}
             </div>
             <div className="agent-compact-telemetry">
               <span>{orchestratorFacts.timingText}</span>
@@ -232,6 +250,7 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
         </div>
       </section>
 
+      {jobType === "data_mining" ? (
       <section className="data-mining-panel subagent-panel" aria-labelledby="subagent-panel-label">
         <div className="data-mining-panel-label" id="subagent-panel-label">
           SUBAGENT PANEL
@@ -289,6 +308,7 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
           )}
         </div>
       </section>
+      ) : null}
     </div>
   );
 }

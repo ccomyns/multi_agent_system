@@ -1,3 +1,5 @@
+import type { JobType, PublishedWebsite } from "@/lib/jobs";
+
 export type TokenUsage = {
   inputTokens: number | null;
   cachedInputTokens: number | null;
@@ -28,6 +30,8 @@ export type AgentTelemetryEvent = {
 export type AgentTelemetryResponse = {
   actorType: "orchestrator" | "subagent";
   agentId: string | null;
+  jobType: JobType;
+  publishedWebsite: PublishedWebsite | null;
   task: string;
   status: string;
   error?: string | null;
@@ -59,6 +63,18 @@ function recordValue(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function isSafeHttpsUrl(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" && !parsed.username && !parsed.password;
+  } catch {
+    return false;
+  }
 }
 
 function isNullableInteger(value: unknown): value is number | null {
@@ -148,10 +164,22 @@ export function parseTelemetryEvents(text: string): AgentTelemetryEvent[] {
 
 export function isAgentTelemetryResponse(value: unknown): value is AgentTelemetryResponse {
   const record = recordValue(value);
+  const website = recordValue(record?.publishedWebsite);
   return Boolean(
     record &&
       (record.actorType === "orchestrator" || record.actorType === "subagent") &&
       (record.agentId === null || typeof record.agentId === "string") &&
+      (record.jobType === "data_mining" || record.jobType === "software_builder") &&
+      (record.publishedWebsite === null ||
+        (website &&
+          website.provider === "vercel" &&
+          isSafeHttpsUrl(website.url) &&
+          typeof website.deploymentId === "string" &&
+          typeof website.projectId === "string" &&
+          typeof website.projectName === "string" &&
+          typeof website.branch === "string" &&
+          typeof website.commitSha === "string" &&
+          typeof website.publishedAt === "string")) &&
       typeof record.task === "string" &&
       typeof record.status === "string" &&
       (!("error" in record) || record.error === null || typeof record.error === "string") &&

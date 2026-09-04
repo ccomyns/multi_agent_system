@@ -115,6 +115,8 @@ export async function GET(
     const payload: AgentTelemetryResponse = {
       actorType: "subagent",
       agentId,
+      jobType,
+      publishedWebsite: null,
       task: typeof input?.task === "string" ? input.task : "Task unavailable",
       status,
       error: errorFromStatus(failedStatus) ??
