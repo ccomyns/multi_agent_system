@@ -170,6 +170,7 @@ resource "aws_lambda_function" "project_credentials_broker" {
       GLOBAL_MEMORY_BUCKET_NAME                = aws_s3_bucket.global_memory.id
       JOBS_TABLE_NAME                          = aws_dynamodb_table.jobs.name
       PROJECT_WORKSPACE_ROLE_ARN               = aws_iam_role.software_builder_project_workspace.arn
+      DATABASE_CREDENTIALS_SSM_PREFIX          = "${local.postgresql_ssm_parameter_prefix}/databases"
     }
   }
 
@@ -211,6 +212,7 @@ resource "aws_lambda_function" "vercel_publisher" {
       JOBS_TABLE_NAME                          = aws_dynamodb_table.jobs.name
       VERCEL_ACCESS_TOKEN_SSM_PARAMETER_NAME   = local.vercel_access_token_ssm_parameter_name
       VERCEL_TEAM_ID                           = var.vercel_team_id
+      DATABASE_CREDENTIALS_SSM_PREFIX          = "${local.postgresql_ssm_parameter_prefix}/databases"
     }
   }
 

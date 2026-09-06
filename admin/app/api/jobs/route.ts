@@ -23,6 +23,7 @@ import {
 import type { Job, JobStatus, JobType, JobsSnapshot } from "@/lib/jobs";
 import { DEFAULT_JOB_TYPE, isJobType, JOB_ID_PATTERN } from "@/lib/jobs";
 import { projectNameError } from "@/lib/project-uploads";
+import { listDatabases } from "@/lib/databases";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,6 +48,7 @@ type LaunchJobRequest = {
   jobId?: unknown;
   originalTask?: unknown;
   projectName?: unknown;
+  databaseName?: unknown;
   typeOfJob?: unknown;
 };
 
@@ -387,6 +389,20 @@ export async function POST(request: Request) {
 
   let githubRepository: Awaited<ReturnType<typeof getOrganizationRepository>> | null = null;
   let projectName: string | null = null;
+  let databaseName: string | null = null;
+  if (input.databaseName !== undefined) {
+    if (typeOfJob !== "software_builder" || typeof input.databaseName !== "string" || !input.databaseName) {
+      return errorResponse("databaseName must be a nonempty string for a software-builder job.", 400);
+    }
+    try {
+      if (!(await listDatabases()).some((database) => database.name === input.databaseName && database.managed)) {
+        return errorResponse("The selected database does not have a completed managed credential setup.", 409);
+      }
+      databaseName = input.databaseName;
+    } catch {
+      return errorResponse("The selected database could not be validated. Check the admin server's RDS configuration.", 502);
+    }
+  }
   if (typeOfJob === "software_builder") {
     if (
       typeof input.githubRepositoryId !== "number" ||
@@ -485,6 +501,7 @@ export async function POST(request: Request) {
                 pk: jobPk(jobId),
                 job_id: jobId,
                 original_task: originalTask,
+                database_name: databaseName,
                 type_of_job: typeOfJob,
                 status: "initializing",
                 created_at: createdAt,
@@ -509,6 +526,7 @@ export async function POST(request: Request) {
                       job_id: jobId,
                       github_repository_id: githubRepository.id,
                       github_repository_full_name: githubRepository.fullName,
+                      database_name: databaseName,
                       ...(projectName
                         ? { global_memory_project_name: projectName }
                         : {}),

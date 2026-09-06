@@ -233,6 +233,15 @@ resource "aws_iam_role_policy" "project_credentials_broker" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid    = "ReadAssignedDatabaseOwner"
+        Effect = "Allow"
+        Action = "ssm:GetParameter"
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.postgresql_ssm_parameter_prefix}/databases/*/owner",
+          "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.postgresql_ssm_parameter_prefix}/databases/*/status"
+        ]
+      },
+      {
         Sid      = "ReadActiveSoftwareJob"
         Effect   = "Allow"
         Action   = "dynamodb:GetItem"
@@ -287,6 +296,15 @@ resource "aws_iam_role_policy" "vercel_publisher" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      {
+        Sid    = "ReadAssignedDatabaseApplication"
+        Effect = "Allow"
+        Action = "ssm:GetParameter"
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.postgresql_ssm_parameter_prefix}/databases/*/app",
+          "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.postgresql_ssm_parameter_prefix}/databases/*/status"
+        ]
+      },
       {
         Sid    = "ReadActiveSoftwareJob"
         Effect = "Allow"
@@ -602,6 +620,38 @@ resource "aws_iam_role_policy_attachment" "software_builder_orchestrator_ssm" {
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+// AmazonSSMManagedInstanceCore grants GetParameter/GetParameters on "*".
+// Explicit denies are necessary: removing the custom allow is insufficient.
+resource "aws_iam_role_policy" "runtime_database_secret_deny" {
+  for_each = {
+    software_builder = aws_iam_role.software_builder_orchestrator.id
+    data_mining      = aws_iam_role.orchestrator.id
+    image_builder    = aws_iam_role.image_builder.id
+  }
+  name = "deny-direct-database-secrets"
+  role = each.value
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "DenyDirectDatabaseSecrets"
+        Effect = "Deny"
+        Action = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParameterHistory"]
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.postgresql_ssm_parameter_prefix}",
+          "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.postgresql_ssm_parameter_prefix}/*"
+        ]
+      },
+      {
+        Sid      = "DenyRecursiveParameterReads"
+        Effect   = "Deny"
+        Action   = "ssm:GetParametersByPath"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role_policy" "software_builder_orchestrator" {
   name = "software-builder-runtime"
   role = aws_iam_role.software_builder_orchestrator.id
@@ -638,15 +688,6 @@ resource "aws_iam_role_policy" "software_builder_orchestrator" {
           "ssm:PutParameter"
         ]
         Resource = "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.codex_auth_ssm_parameter_name}"
-      },
-      {
-        Sid    = "ReadPostgresqlCredentials"
-        Effect = "Allow"
-        Action = [
-          "ssm:GetParameter",
-          "ssm:GetParameters"
-        ]
-        Resource = "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.postgresql_ssm_parameter_prefix}/*"
       },
       {
         Sid      = "ListAgentWorkspace"
@@ -721,6 +762,18 @@ resource "aws_iam_policy" "admin_server" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      {
+        Sid      = "ProvisionManagedDatabaseCredentials"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter", "ssm:PutParameter"]
+        Resource = "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.postgresql_ssm_parameter_prefix}/databases/*"
+      },
+      {
+        Sid      = "ReadPostgresqlConnectionParameters"
+        Effect   = "Allow"
+        Action   = "ssm:GetParameters"
+        Resource = "arn:${data.aws_partition.current.partition}:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.postgresql_ssm_parameter_prefix}/*"
+      },
       {
         Sid      = "UploadPrivateJobInputs"
         Effect   = "Allow"

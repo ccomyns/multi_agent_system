@@ -161,6 +161,30 @@ def _required_environment(name: str) -> str:
     return value
 
 
+def request_database_credentials(*, region: str, function_name: str, job_id: str,
+                                 orchestrator_instance_id: str, lambda_client: Any | None = None) -> str | None:
+    client = lambda_client or boto3.client("lambda", region_name=region)
+    response = client.invoke(
+        FunctionName=function_name, InvocationType="RequestResponse",
+        Payload=json.dumps({"job_id": job_id, "orchestrator_instance_id": orchestrator_instance_id,
+                            "resource": "database"}).encode("utf-8"),
+    )
+    payload = _decode_lambda_payload(response)
+    if response.get("FunctionError"):
+        raise RuntimeError("the database credential broker failed")
+    status, body = _response_body(payload)
+    if status != 200:
+        raise RuntimeError("The assigned database credentials could not be issued.")
+    if "database" not in body:
+        raise RuntimeError("The database credential broker returned an invalid response.")
+    database = body["database"]
+    if database is None:
+        return None
+    if not isinstance(database, dict):
+        raise RuntimeError("The database credential broker returned an invalid response.")
+    return _required_string(database.get("url"), "database URL")
+
+
 @contextmanager
 def base_role_environment() -> Iterator[None]:
     names = (

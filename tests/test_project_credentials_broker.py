@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 import types
@@ -36,6 +37,46 @@ INSTANCE_ID = "i-1234567890abcdef0"
 
 
 class ProjectCredentialsBrokerTests(unittest.TestCase):
+    def test_database_request_uses_only_assigned_owner_secret(self):
+        ssm = Mock()
+        url = "postgresql://db_" + "a" * 24 + "_owner:secret@host/app?sslmode=require"
+        ssm.get_parameter.side_effect = [
+            {"Parameter": {"Value": "ready"}},
+            {"Parameter": {"Value": json.dumps({"database_name": "app", "url": url})}},
+        ]
+        with patch.dict(os.environ, {"DATABASE_CREDENTIALS_SSM_PREFIX": "/db/databases"}), \
+             patch.object(handler, "_trusted_assignment", return_value={"database_name": {"S": "app"}}), \
+             patch.object(handler, "_client", return_value=ssm):
+            result = handler.lambda_handler(self.request(resource="database"), None)
+        self.assertEqual(result["statusCode"], 200)
+        self.assertEqual(result["body"]["database"]["url"], url)
+        self.assertEqual(ssm.get_parameter.call_args.kwargs["Name"], "/db/databases/app/owner")
+
+    def test_database_request_cannot_select_another_database(self):
+        with patch.object(handler, "_client") as client:
+            result = handler.lambda_handler(self.request(resource="database", database_name="other"), None)
+        self.assertEqual(result["statusCode"], 400)
+        client.assert_not_called()
+
+    def test_database_request_checks_instance_before_reading_secrets(self):
+        dynamodb, sts = self.clients(orchestrator_instance_id="i-00000000000000000")
+        ssm = Mock()
+        with patch.dict(os.environ, self.environment(), clear=True), \
+             patch.object(handler, "_client", side_effect=lambda name: {"dynamodb": dynamodb, "sts": sts, "ssm": ssm}[name]):
+            result = handler.lambda_handler(self.request(resource="database"), None)
+        self.assertEqual(result["statusCode"], 403)
+        ssm.get_parameter.assert_not_called()
+
+    def test_incomplete_database_never_returns_a_secret(self):
+        ssm = Mock()
+        ssm.get_parameter.return_value = {"Parameter": {"Value": "provisioning"}}
+        with patch.dict(os.environ, {"DATABASE_CREDENTIALS_SSM_PREFIX": "/db/databases"}), \
+             patch.object(handler, "_trusted_assignment", return_value={"database_name": {"S": "app"}}), \
+             patch.object(handler, "_client", return_value=ssm):
+            result = handler.lambda_handler(self.request(resource="database"), None)
+        self.assertEqual(result["statusCode"], 409)
+        self.assertEqual(ssm.get_parameter.call_count, 1)
+
     def environment(self) -> dict[str, str]:
         return {
             "GITHUB_REPOSITORY_ASSIGNMENTS_TABLE_NAME": "assignments-table",

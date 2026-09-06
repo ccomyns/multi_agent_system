@@ -56,6 +56,7 @@ class PublishRequest:
 class RepositoryAssignment:
     repository_id: int
     full_name: str
+    database_name: str | None = None
 
     @property
     def name(self) -> str:
@@ -320,7 +321,10 @@ def _assigned_repository(
             "repository_outside_organization",
             "The assigned repository is outside the configured GitHub organization.",
         )
-    return RepositoryAssignment(repository_id=repository_id, full_name=full_name)
+    database_name = _string_attribute(assignment, "database_name")
+    if database_name is not None and not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", database_name):
+        raise PublisherError(409, "invalid_database_assignment", "Invalid database assignment.")
+    return RepositoryAssignment(repository_id=repository_id, full_name=full_name, database_name=database_name)
 
 
 def _vercel_token(parameter_name: str) -> str:
@@ -593,6 +597,43 @@ def _deployment_summary(
     }
 
 
+def _install_database_environment(token: str, configuration: Configuration,
+                                  repository: RepositoryAssignment, project_id: str) -> None:
+    if repository.database_name is None:
+        return
+    # Scope comes exclusively from the assignment validated for this active job.
+    # Neither caller-provided env vars nor database names are accepted.
+    name = repository.database_name
+    prefix = _required_environment("DATABASE_CREDENTIALS_SSM_PREFIX")
+    try:
+        ssm = _client("ssm")
+        status = ssm.get_parameter(Name=f"{prefix}/{name}/status")["Parameter"]["Value"]
+        if status != "ready":
+            raise ValueError("database not ready")
+        secret = json.loads(ssm.get_parameter(Name=f"{prefix}/{name}/app", WithDecryption=True)["Parameter"]["Value"])
+        url = secret.get("url", "")
+        parsed = urllib_parse.urlsplit(url)
+        if secret.get("database_name") != name or parsed.scheme != "postgresql" or urllib_parse.unquote(parsed.path) != f"/{name}" or not re.fullmatch(r"db_[a-f0-9]{24}_app", parsed.username or "") or not parsed.password or not parsed.hostname:
+            raise ValueError("invalid application credential")
+        result = _vercel_json(
+            "POST", f"/v10/projects/{urllib_parse.quote(project_id, safe='')}/env",
+            token, configuration.team_id, query={"upsert": "true"},
+            body={"key": "DATABASE_URL", "value": url, "type": "sensitive", "target": ["production"]},
+        )
+        created = result.get("created") if isinstance(result, dict) else None
+        entries = created if isinstance(created, list) else [created]
+        if not isinstance(result, dict) or result.get("failed") or not any(
+            isinstance(entry, dict) and entry.get("key") == "DATABASE_URL" and entry.get("type") == "sensitive"
+            and entry.get("target") == ["production"] for entry in entries
+        ):
+            raise ValueError("environment update not confirmed")
+    except Exception:
+        # Upstream errors can echo submitted values. Never log/return the secret
+        # or the original Vercel/SSM response for an environment upload.
+        raise PublisherError(502, "database_environment_failed",
+                             "The application database environment could not be configured; deployment was not started.") from None
+
+
 def _publish(
     request: PublishRequest,
     configuration: Configuration,
@@ -604,11 +645,16 @@ def _publish(
         configuration,
         repository,
     )
+    _install_database_environment(token, configuration, repository, project_id)
     deployment = _vercel_json(
         "POST",
         "/v13/deployments",
         token,
         configuration.team_id,
+        # Framework-based first deployments otherwise require an interactive
+        # projectSettings confirmation, even after the project was created.
+        # Accept Vercel's detection for the assigned commit in this automation.
+        query={"skipAutoDetectionConfirmation": "1"},
         body={
             "name": project_name,
             "project": project_id,

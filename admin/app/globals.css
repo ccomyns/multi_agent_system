@@ -616,6 +616,10 @@ h1 {
   box-shadow: 0 0 0 4px rgb(67 127 187 / 10%);
 }
 
+.software-database-controls {
+  margin-top: 16px;
+}
+
 .software-repo-controls {
   display: grid;
   width: 100%;
@@ -975,6 +979,34 @@ h1 {
   background: var(--surface-blue);
   border-color: #a9c6e2;
   box-shadow: inset 3px 0 0 var(--blue);
+}
+
+.software-database-options button {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.software-database-options button strong {
+  font-size: 11px;
+}
+
+.software-database-options button small {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.software-database-options button:disabled {
+  cursor: not-allowed;
+  color: var(--text-strong);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .software-context-state {

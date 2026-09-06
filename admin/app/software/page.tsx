@@ -12,6 +12,8 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Sidebar } from "@/components/sidebar";
+import { DatabaseControls, type DatabaseSelection } from "@/components/database-controls";
+import { isDatabaseSummary } from "@/lib/database-types";
 import {
   GITHUB_REPOSITORY_DESCRIPTION_MAX_LENGTH,
   GITHUB_REPOSITORY_NAME_MAX_LENGTH,
@@ -56,6 +58,7 @@ function responseError(value: unknown, fallback: string) {
 export default function SoftwareBuilderPage() {
   const router = useRouter();
   const [idea, setIdea] = useState("");
+  const [database, setDatabase] = useState<DatabaseSelection | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const [repositoryPickerOpen, setRepositoryPickerOpen] = useState(false);
   const [createRepositoryOpen, setCreateRepositoryOpen] = useState(false);
@@ -353,7 +356,21 @@ export default function SoftwareBuilderPage() {
     let project = selectedProject;
     let createdRepositoryName: string | null = null;
     let createdProjectName: string | null = null;
+    let createdDatabaseName: string | null = null;
     try {
+      if (database?.create) {
+        const response = await fetch("/api/databases", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: database.name, description: database.description ?? "" }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(responseError(payload, "Database creation failed."));
+        if (!isDatabaseSummary(payload.database)) throw new Error("The admin server returned an unexpected database.");
+        createdDatabaseName = payload.database.name;
+        setDatabase({ ...payload.database, create: false });
+        if (payload.warning) throw new Error(payload.warning);
+      }
       if (pendingRepository) {
         const response = await fetch("/api/github/repositories", {
           method: "POST",
@@ -425,6 +442,7 @@ export default function SoftwareBuilderPage() {
         null,
         repository.id,
         project || undefined,
+        database?.name,
       );
       setIdea("");
       setSubmitNotice(
@@ -435,6 +453,7 @@ export default function SoftwareBuilderPage() {
       const createdResources = [
         createdRepositoryName ? `Repository ${createdRepositoryName}` : null,
         createdProjectName ? `project ${createdProjectName}` : null,
+        createdDatabaseName ? `database ${createdDatabaseName}` : null,
       ].filter((resource): resource is string => Boolean(resource));
       const prefix = createdResources.length
         ? `${createdResources.join(" and ")} ${
@@ -754,6 +773,11 @@ export default function SoftwareBuilderPage() {
                       </button>
                     </div>
                   ) : null}
+                  <DatabaseControls value={database} disabled={submitting} onChange={(selection) => {
+                    setDatabase(selection);
+                    setSubmitError(null);
+                    setSubmitNotice(null);
+                  }} />
                 </div>
               </section>
             </div>
@@ -776,7 +800,9 @@ export default function SoftwareBuilderPage() {
                 onClick={() => void submitSoftwareBuilder()}
               >
                 {submitting
-                  ? pendingRepository && pendingProject
+                  ? database?.create
+                    ? "CREATING DATABASE…"
+                    : pendingRepository && pendingProject
                     ? "CREATING SETUP…"
                     : pendingRepository
                       ? "CREATING REPO…"

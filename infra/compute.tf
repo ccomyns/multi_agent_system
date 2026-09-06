@@ -75,7 +75,6 @@ locals {
 
     cat >> /etc/multi-agent/orchestrator.env <<ENV
     PROJECT_CREDENTIALS_BROKER_FUNCTION_NAME=${aws_lambda_function.project_credentials_broker.function_name}
-    POSTGRESQL_SSM_PARAMETER_PREFIX=${local.postgresql_ssm_parameter_prefix}
     GIT_AUTHOR_NAME=${jsonencode(var.software_builder_git_author_name)}
     GIT_AUTHOR_EMAIL=${jsonencode(var.software_builder_git_author_email)}
     VERCEL_PUBLISHER_FUNCTION_NAME=${aws_lambda_function.vercel_publisher.function_name}

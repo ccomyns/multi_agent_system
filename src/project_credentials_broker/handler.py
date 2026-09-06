@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from urllib.parse import unquote, urlsplit
 from datetime import datetime, timezone
 from typing import Any
 
@@ -64,13 +65,14 @@ def _get_item(table_name: str, key: dict[str, dict[str, str]]) -> dict[str, Any]
 def _parse_request(event: Any) -> tuple[str, str]:
     if not isinstance(event, dict):
         raise BrokerError(400, "invalid_request", "The broker request must be an object.")
-    forbidden = {"bucket", "prefix", "project", "project_name"}
-    if forbidden.intersection(event):
+    if set(event) - {"job_id", "orchestrator_instance_id", "resource"}:
         raise BrokerError(
             400,
             "project_scope_not_accepted",
             "Project scope is derived from the trusted job assignment, not broker input.",
         )
+    if event.get("resource", "project") not in {"project", "database"}:
+        raise BrokerError(400, "invalid_resource", "The credential resource is invalid.")
     job_id = event.get("job_id")
     instance_id = event.get("orchestrator_instance_id")
     if not isinstance(job_id, str) or not JOB_ID_PATTERN.fullmatch(job_id):
@@ -84,7 +86,7 @@ def _parse_request(event: Any) -> tuple[str, str]:
     return job_id, instance_id
 
 
-def _assigned_project(job_id: str, instance_id: str) -> str:
+def _trusted_assignment(job_id: str, instance_id: str) -> dict[str, Any]:
     jobs_table = _required_environment("JOBS_TABLE_NAME")
     assignments_table = _required_environment(
         "GITHUB_REPOSITORY_ASSIGNMENTS_TABLE_NAME"
@@ -126,6 +128,11 @@ def _assigned_project(job_id: str, instance_id: str) -> str:
             "The software-builder job has no global-memory project assignment.",
         )
 
+    return assignment
+
+
+def _assigned_project(job_id: str, instance_id: str) -> str:
+    assignment = _trusted_assignment(job_id, instance_id)
     project_name = _string_attribute(assignment, "global_memory_project_name")
     if (
         not project_name
@@ -199,9 +206,31 @@ def _issue_credentials(job_id: str, project_name: str) -> dict[str, Any]:
     }
 
 
+def _database_credentials(job_id: str, instance_id: str) -> dict[str, Any]:
+    assignment = _trusted_assignment(job_id, instance_id)
+    name = _string_attribute(assignment, "database_name")
+    if name is None:
+        return {"database": None}
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", name):
+        raise BrokerError(409, "invalid_database_assignment", "Invalid database assignment.")
+    prefix = _required_environment("DATABASE_CREDENTIALS_SSM_PREFIX")
+    ssm = _client("ssm")
+    status = ssm.get_parameter(Name=f"{prefix}/{name}/status")["Parameter"]["Value"]
+    if status != "ready":
+        raise BrokerError(409, "database_not_ready", "Database provisioning is incomplete.")
+    secret = json.loads(ssm.get_parameter(Name=f"{prefix}/{name}/owner", WithDecryption=True)["Parameter"]["Value"])
+    url = secret.get("url", "")
+    parsed = urlsplit(url)
+    if secret.get("database_name") != name or parsed.scheme != "postgresql" or unquote(parsed.path) != f"/{name}" or not re.fullmatch(r"db_[a-f0-9]{24}_owner", parsed.username or "") or not parsed.password or not parsed.hostname:
+        raise BrokerError(502, "invalid_database_secret", "The database credential is invalid.")
+    return {"database": {"name": name, "url": url}}
+
+
 def lambda_handler(event: Any, _context: Any) -> dict[str, Any]:
     try:
         job_id, instance_id = _parse_request(event)
+        if event.get("resource") == "database":
+            return {"statusCode": 200, "body": _database_credentials(job_id, instance_id)}
         project_name = _assigned_project(job_id, instance_id)
         return {
             "statusCode": 200,

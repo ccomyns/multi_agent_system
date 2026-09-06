@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import io
+import json
+import os
 import sys
 import types
 import unittest
@@ -33,6 +36,108 @@ publisher = _load_handler()
 
 
 class VercelPublisherHandlerTests(unittest.TestCase):
+    def test_first_framework_deployment_confirms_detection_after_database_upload(self):
+        for with_database in (False, True):
+            with self.subTest(with_database=with_database):
+                repository = publisher.RepositoryAssignment(
+                    123456, "mas-workspace/generated-site", "app" if with_database else None
+                )
+                database_url = "postgresql://db_" + "a" * 24 + "_app:secret@host/app?sslmode=require"
+                ssm = Mock()
+                ssm.get_parameter.side_effect = [
+                    {"Parameter": {"Value": "ready"}},
+                    {"Parameter": {"Value": json.dumps({"database_name": "app", "url": database_url})}},
+                ]
+                requests = []
+
+                def upstream(request, timeout):
+                    url = publisher.urllib_parse.urlsplit(request.full_url)
+                    query = publisher.urllib_parse.parse_qs(url.query)
+                    body = json.loads(request.data)
+                    requests.append(url.path)
+                    self.assertEqual(query["teamId"], [self.configuration.team_id])
+                    if url.path.endswith("/env"):
+                        self.assertEqual(body["value"], database_url)
+                        response = {"created": {"key": "DATABASE_URL", "type": "sensitive", "target": ["production"]}}
+                    else:
+                        # Model Vercel's observed first-deployment confirmation
+                        # error at the HTTP boundary. Without the query fix this
+                        # raises the same rejection seen in the actual job.
+                        if query.get("skipAutoDetectionConfirmation") != ["1"]:
+                            raise publisher.urllib_error.HTTPError(
+                                request.full_url, 400, "Bad Request", {}, io.BytesIO(json.dumps({
+                                    "error": {"code": "missing_project_settings", "message": "The projectSettings object is required for new projects"}
+                                }).encode())
+                            )
+                        self.assertEqual(body["gitSource"]["sha"], self.request.commit_sha)
+                        self.assertNotIn("secret", request.data.decode())
+                        response = {"id": "dpl_abc123", "readyState": "QUEUED", "projectId": "prj_abc123", "target": "production", "url": "site.vercel.app"}
+                    return io.BytesIO(json.dumps(response).encode())
+
+                with patch.dict(os.environ, {"DATABASE_CREDENTIALS_SSM_PREFIX": "/db/databases"}), \
+                     patch.object(publisher, "_client", return_value=ssm), \
+                     patch.object(publisher, "_get_or_create_project", return_value=("prj_abc123", "generated-site")), \
+                     patch.object(publisher.urllib_request, "urlopen", side_effect=upstream):
+                    result = publisher._publish(self.request, self.configuration, repository, "token")
+                self.assertEqual(result["id"], "dpl_abc123")
+                self.assertEqual(requests, (["/v10/projects/prj_abc123/env"] if with_database else []) + ["/v13/deployments"])
+
+    def test_database_environment_is_installed_before_deploying(self):
+        repository = publisher.RepositoryAssignment(123456, "mas-workspace/generated-site", "app")
+        url = "postgresql://db_" + "a" * 24 + "_app:secret@host/app?sslmode=require"
+        ssm = Mock()
+        ssm.get_parameter.side_effect = [
+            {"Parameter": {"Value": "ready"}},
+            {"Parameter": {"Value": json.dumps({"database_name": "app", "url": url})}},
+        ]
+        def vercel(method, path, *args, **kwargs):
+            if path.endswith("/env"):
+                self.assertEqual(kwargs["query"], {"upsert": "true"})
+                self.assertEqual(kwargs["body"], {"key": "DATABASE_URL", "value": url, "type": "sensitive", "target": ["production"]})
+                return {"created": {"key": "DATABASE_URL", "type": "sensitive", "target": ["production"]}, "failed": []}
+            return {"id": "dpl_abc123", "readyState": "QUEUED", "projectId": "prj_abc123", "target": "production", "url": "site.vercel.app"}
+        with patch.dict(os.environ, {"DATABASE_CREDENTIALS_SSM_PREFIX": "/db/databases"}), \
+             patch.object(publisher, "_client", return_value=ssm), \
+             patch.object(publisher, "_get_or_create_project", return_value=("prj_abc123", "generated-site")), \
+             patch.object(publisher, "_vercel_json", side_effect=vercel) as api:
+            result = publisher._publish(self.request, self.configuration, repository, "token")
+        self.assertEqual([call.args[1] for call in api.call_args_list], ["/v10/projects/prj_abc123/env", "/v13/deployments"])
+        self.assertEqual(ssm.get_parameter.call_args.kwargs["Name"], "/db/databases/app/app")
+        self.assertNotIn("secret", json.dumps(result))
+
+    def test_environment_failure_prevents_deployment_and_redacts_upstream_error(self):
+        repository = publisher.RepositoryAssignment(123456, "mas-workspace/generated-site", "app")
+        url = "postgresql://db_" + "a" * 24 + "_app:secret@host/app?sslmode=require"
+        for response in [RuntimeError(url), {"failed": [{"error": {"message": url}}]}, {}]:
+            ssm = Mock()
+            ssm.get_parameter.side_effect = [
+                {"Parameter": {"Value": "ready"}},
+                {"Parameter": {"Value": json.dumps({"database_name": "app", "url": url})}},
+            ]
+            with patch.dict(os.environ, {"DATABASE_CREDENTIALS_SSM_PREFIX": "/db/databases"}), \
+                 patch.object(publisher, "_client", return_value=ssm), \
+                 patch.object(publisher, "_get_or_create_project", return_value=("prj_abc123", "generated-site")), \
+                 patch.object(publisher, "_vercel_json", side_effect=[response]) as api:
+                with self.assertRaises(publisher.PublisherError) as raised:
+                    publisher._publish(self.request, self.configuration, repository, "token")
+            self.assertNotIn("secret", str(raised.exception))
+            self.assertEqual(api.call_count, 1)
+            self.assertTrue(api.call_args.args[1].endswith("/env"))
+
+    def test_publisher_rejects_owner_credential(self):
+        repository = publisher.RepositoryAssignment(123456, "mas-workspace/generated-site", "app")
+        ssm = Mock()
+        ssm.get_parameter.side_effect = [
+            {"Parameter": {"Value": "ready"}},
+            {"Parameter": {"Value": json.dumps({"database_name": "app", "url": "postgresql://db_" + "a" * 24 + "_owner:secret@host/app"})}},
+        ]
+        with patch.dict(os.environ, {"DATABASE_CREDENTIALS_SSM_PREFIX": "/db/databases"}), \
+             patch.object(publisher, "_client", return_value=ssm), \
+             patch.object(publisher, "_vercel_json") as api:
+            with self.assertRaises(publisher.PublisherError):
+                publisher._install_database_environment("token", self.configuration, repository, "prj_abc123")
+        api.assert_not_called()
+
     def setUp(self) -> None:
         publisher._clients.clear()
         publisher._token_cache.clear()
@@ -144,6 +249,7 @@ class VercelPublisherHandlerTests(unittest.TestCase):
         call = vercel_json.call_args
         self.assertEqual(call.args[:2], ("POST", "/v13/deployments"))
         self.assertEqual(call.args[3], self.configuration.team_id)
+        self.assertEqual(call.kwargs["query"], {"skipAutoDetectionConfirmation": "1"})
         self.assertEqual(
             call.kwargs["body"],
             {

@@ -16,6 +16,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib import parse as urllib_parse
 from urllib.parse import quote
 
 import boto3
@@ -25,7 +26,7 @@ from software_github_credentials import (
     RepositoryCredentials,
     request_repository_credentials,
 )
-from software_project_credentials import request_project_credentials
+from software_project_credentials import request_database_credentials, request_project_credentials
 
 
 LOG = logging.getLogger("orchestrator-software-runner")
@@ -90,9 +91,6 @@ class SoftwareOrchestratorRun:
         self.workspace_bucket = required_env("AGENT_WORKSPACE_BUCKET_NAME")
         self.global_memory_bucket = required_env("GLOBAL_MEMORY_BUCKET_NAME")
         self.auth_parameter = required_env("CODEX_AUTH_SSM_PARAMETER_NAME")
-        self.database_parameter_prefix = required_env(
-            "POSTGRESQL_SSM_PARAMETER_PREFIX"
-        ).rstrip("/")
         self.orchestrator_model = required_env("ORCHESTRATOR_MODEL")
         self.token_broker_function = required_env("GITHUB_TOKEN_BROKER_FUNCTION_NAME")
         self.project_broker_function = required_env(
@@ -153,6 +151,7 @@ class SoftwareOrchestratorRun:
 
         self.original_auth = ""
         self.database_url = ""
+        self.selected_database_name = ""
         self.repository_id: int | None = None
         self.repository_full_name: str | None = None
         self.project_name: str | None = None
@@ -197,6 +196,7 @@ class SoftwareOrchestratorRun:
                 raise RuntimeError("job belongs to a different orchestrator")
             if not task:
                 raise RuntimeError("job has no original_task")
+            self.selected_database_name = string_attribute(item, "database_name") or ""
             return task
 
     def install_auth(self) -> None:
@@ -212,57 +212,23 @@ class SoftwareOrchestratorRun:
         self._atomic_secret_write(self.codex_home / "auth.json", value)
 
     def install_database_credentials(self) -> None:
-        parameter_names = {
-            field: f"{self.database_parameter_prefix}/{suffix}"
-            for field, suffix in (
-                ("host", "host"),
-                ("port", "port"),
-                ("database_name", "database-name"),
-                ("username", "username"),
-                ("password", "password"),
-            )
-        }
-        response = self.ssm.get_parameters(
-            Names=list(parameter_names.values()),
-            WithDecryption=True,
+        url = request_database_credentials(
+            region=self.region,
+            function_name=self.project_broker_function,
+            job_id=self.job_id,
+            orchestrator_instance_id=self.orchestrator_instance_id,
+            lambda_client=self.lambda_client,
         )
-        invalid_parameters = response.get("InvalidParameters", [])
-        if invalid_parameters:
-            raise RuntimeError("one or more PostgreSQL parameters do not exist")
-
-        parameters = {
-            item.get("Name"): item.get("Value")
-            for item in response.get("Parameters", [])
-            if isinstance(item, dict)
-        }
-        missing_fields = [
-            field
-            for field, name in parameter_names.items()
-            if not isinstance(parameters.get(name), str) or not parameters[name]
-        ]
-        if missing_fields:
-            raise RuntimeError(
-                "PostgreSQL parameters are missing required fields: "
-                + ", ".join(sorted(missing_fields))
-            )
-
-        host = parameters[parameter_names["host"]].strip()
-        port = parameters[parameter_names["port"]].strip()
-        database_name = parameters[parameter_names["database_name"]].strip()
-        username = parameters[parameter_names["username"]].strip()
-        password = parameters[parameter_names["password"]]
-        if not re.fullmatch(r"[A-Za-z0-9.-]+", host):
-            raise RuntimeError("the PostgreSQL host parameter is invalid")
-        if not port.isdigit() or not 1 <= int(port) <= 65535:
-            raise RuntimeError("the PostgreSQL port parameter is invalid")
-        if not database_name or not username:
-            raise RuntimeError("the PostgreSQL database name and username are required")
-
-        self.database_url = (
-            f"postgresql://{quote(username, safe='')}:{quote(password, safe='')}@"
-            f"{host}:{port}/{quote(database_name, safe='')}?sslmode=require"
-        )
-        self._atomic_secret_write(self.database_url_file, self.database_url)
+        if url is None:
+            if self.selected_database_name:
+                raise RuntimeError("The assigned database credential is missing")
+            self.database_url = ""
+            return
+        parsed = urllib_parse.urlsplit(url)
+        if not self.selected_database_name or urllib_parse.unquote(parsed.path) != f"/{self.selected_database_name}":
+            raise RuntimeError("The database credential does not match the job")
+        self.database_url = url
+        self._atomic_secret_write(self.database_url_file, url)
 
     def clear_database_credentials(self) -> None:
         self.database_url = ""
@@ -452,7 +418,7 @@ approval_mode = "approve"
         os.chmod(destination, 0o600)
 
     def codex_environment(self) -> dict[str, str]:
-        if not self.database_url or not self.database_url_file.is_file():
+        if self.selected_database_name and (not self.database_url or not self.database_url_file.is_file()):
             raise RuntimeError("PostgreSQL credentials were not installed")
         inherited_names = (
             "PATH",
@@ -472,8 +438,7 @@ approval_mode = "approve"
                 "AWS_REGION": self.region,
                 "AWS_EC2_METADATA_DISABLED": "true",
                 "CODEX_HOME": str(self.codex_home),
-                "DATABASE_URL": self.database_url,
-                "DATABASE_URL_FILE": str(self.database_url_file),
+                **({"DATABASE_URL": self.database_url, "DATABASE_URL_FILE": str(self.database_url_file)} if self.database_url else {}),
                 "GIT_AUTHOR_NAME": self.git_author_name,
                 "GIT_AUTHOR_EMAIL": self.git_author_email,
                 "GIT_TERMINAL_PROMPT": "0",
@@ -513,10 +478,15 @@ approval_mode = "approve"
             "Vercel publisher tool named publish_site is available. Use it only when the user "
             "asks for a public Vercel deployment, and only after every intended change is "
             "committed and pushed. Report the returned public_url to the user. "
-            "A PostgreSQL DATABASE_URL is available in the process environment. You may use "
-            "the configured database to create or alter tables and to read or write data as "
-            "needed for the user's task. Never print, log, commit, or copy DATABASE_URL or its "
-            "credentials into repository files or artifacts. "
+            + (
+                "DATABASE_URL contains the owner credential for your assigned PostgreSQL database. "
+                "Create application tables in the public schema so the application's row-access "
+                "grants apply automatically. Complete schema changes here before publishing; do not "
+                "run schema migrations during the Vercel build. The publisher installs a separate "
+                "row-only DATABASE_URL at deployment time. Never upload the owner credential to "
+                "Vercel, or print, log, commit, or copy credentials into repository files or artifacts. "
+                if self.database_url else "No database is assigned to this job. "
+            )
             + (
                 f"A persistent project workspace is available at {self.project_s3_uri}. "
                 "The AWS environment is already configured with short-lived credentials that "

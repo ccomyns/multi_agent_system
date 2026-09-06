@@ -455,76 +455,79 @@ are available at these Parameter Store paths, where `<project_name>` is the
 | Username | `/<project_name>/database/postgresql/username` | `String` |
 | Password | `/<project_name>/database/postgresql/password` | `SecureString` |
 
-`terraform output postgresql_ssm_parameter_names` reports the exact paths, but
-no Terraform output exposes the password. The generated password and the
-managed SecureString value are nevertheless present in Terraform state. Store
-state in a suitably protected backend and do not print or archive plan files in
-untrusted logs.
+The Software Builder runtime panel can select an existing managed database or
+stage a new database name and optional description. Saving the dialog only
+stages details; the main Submit button provisions the database and credentials.
+Descriptions are PostgreSQL database comments. With no database selected, the
+job receives no database credential; there is no master-credential fallback.
+Existing databases without completed managed credentials are shown as
+unavailable. They are not automatically converted or modified.
 
-A caller needs `ssm:GetParameters` (or `ssm:GetParameter` for individual
-lookups) for those paths. Retrieving the SecureString with `--with-decryption`
-also requires permission to decrypt it. The parameter uses the account's
-standard SSM encryption key. The software-builder orchestrator role has read
-access to this exact parameter hierarchy; other runtime roles do not.
+Each new database has two independently generated PostgreSQL login roles:
 
-At launch, the trusted software-builder runner retrieves all five parameters,
-constructs a URL-encoded `DATABASE_URL`, and writes it to a mode-`0600` runtime
-file outside the checked-out repository. Codex receives the URL in its process
-environment and instructions that it may create tables and read or write data,
-but must never print, log, commit, or copy the credentials into artifacts. The
-runtime file is deleted when the runner exits. A dedicated client security
-group allows only software-builder orchestrators to initiate PostgreSQL
-connections to the RDS security group. No database settings or credentials
-belong in the admin console's `.env.local` file.
+| Role | Consumer | Permissions |
+| --- | --- | --- |
+| Owner | Assigned software-builder job | Own database and public schema; create, alter, and drop application tables; read/write rows |
+| Application | Assigned Vercel project | CONNECT, public schema USAGE, SELECT/INSERT/UPDATE/DELETE on application tables, and sequence USAGE |
 
-Public network reachability does not bypass PostgreSQL authentication. Clients
-must still supply a valid database username and password, and PostgreSQL
-permissions determine which SQL operations they may perform. IAM database
-authentication is disabled because this PoC uses the generated PostgreSQL
-credentials stored in Parameter Store instead.
+Neither role has superuser, CREATEDB, CREATEROLE, replication, or BYPASSRLS
+privileges. Database and public-schema PUBLIC grants are revoked. Default
+privileges apply to tables/sequences created by the owner in the public schema;
+new owner-created functions do not grant PUBLIC execution. The builder must
+complete schema changes before publishing, not in the Vercel build. Custom
+schemas or stored-function access need explicit grants from the owner.
 
-The following example retrieves all fields in one API call and constructs a
-URL-encoded PostgreSQL `DATABASE_URL` without writing a plaintext configuration
-file. Run it from `infra/` after apply with an appropriately authorized AWS
-identity:
+The trusted admin server uses the instance master credential only to provision
+databases/roles and list databases. Each managed database is recorded under
+`/<project_name>/database/postgresql/databases/<database-name>/`:
 
-```bash
-DB_PARAMETER_PREFIX="$(terraform output -raw postgresql_ssm_parameter_prefix)"
-export DB_PARAMETERS_JSON="$(aws ssm get-parameters \
-  --region us-east-1 \
-  --with-decryption \
-  --names \
-    "$DB_PARAMETER_PREFIX/host" \
-    "$DB_PARAMETER_PREFIX/port" \
-    "$DB_PARAMETER_PREFIX/database-name" \
-    "$DB_PARAMETER_PREFIX/username" \
-    "$DB_PARAMETER_PREFIX/password" \
-  --output json)"
+| Parameter | Type | Contents |
+| --- | --- | --- |
+| owner | SecureString | JSON with database_name and owner connection url |
+| app | SecureString | JSON with database_name and application connection url |
+| provisioning | SecureString | Generated role names and passwords retained for resumable setup |
+| status | String | provisioning or ready |
 
-export DATABASE_URL="$(python3 - <<'PY'
-import json
-import os
-from urllib.parse import quote
+A database is selectable only after setup is ready. A PostgreSQL session lock
+serializes creation attempts. If SQL or SSM writes fail, submitting the same
+name resumes setup with the same passwords. Partial databases/roles are retained
+for retry, not deleted. No credentials are returned to the browser.
 
-parameters = {
-    item["Name"].rsplit("/", 1)[-1]: item["Value"]
-    for item in json.loads(os.environ["DB_PARAMETERS_JSON"])["Parameters"]
-}
-username = quote(parameters["username"], safe="")
-password = quote(parameters["password"], safe="")
-database_name = quote(parameters["database-name"], safe="")
-print(
-    f"postgresql://{username}:{password}@{parameters['host']}:"
-    f"{parameters['port']}/{database_name}?sslmode=require"
-)
-PY
-)"
-unset DB_PARAMETERS_JSON DB_PARAMETER_PREFIX
-```
+The credential broker validates the active job, orchestrator instance, and
+trusted database assignment before reading its owner secret. The orchestrator
+has no direct read access to database parameters. The owner URL is written to a
+mode-0600 file outside the repository, injected as DATABASE_URL, and removed
+when the runner exits.
 
-Do not echo `DATABASE_URL` or enable shell command tracing while handling it.
-Applications can read the URL from the process environment and connect with a
-PostgreSQL driver that accepts standard connection URIs.
+At publication time, the Vercel publisher creates or locates the assigned
+project, retrieves only the assigned application secret, and upserts a
+sensitive production DATABASE_URL before triggering deployment. Environment
+upload failures stop publication; retries upsert the same variable. The owner
+credential is never uploaded. Preview/development variables are not populated.
+Credential rotation is not automated; changing a PostgreSQL password requires
+updating its stored secret and republishing/redeploying Vercel.
+
+For the admin server, set `POSTGRESQL_SSM_PARAMETER_PREFIX` to the Terraform
+output of the same name and `POSTGRESQL_CA_BUNDLE_PATH` to a local copy of the
+[AWS RDS CA bundle](https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem).
+These two non-secret settings belong in `admin/.env.local`; database passwords
+do not. The admin host must reach RDS on port 5432, and admin connections verify
+the server certificate using the bundle.
+
+Generate and review a new Terraform plan after changing this code; old saved
+plans do not include the new IAM, broker, publisher, and runner configuration.
+Apply that plan and restart the admin server before using managed databases.
+No new manually configured environment variables are required beyond the two
+admin settings above; Terraform supplies the broker/publisher parameter prefix.
+Do not deploy during an active software-builder job.
+
+`terraform output postgresql_ssm_parameter_names` reports the instance
+provisioning parameter paths without exposing passwords. The master password
+is still present in Terraform state, which must remain protected. Per-database
+passwords are generated at Submit time and are not Terraform resources.
+SecureString values use the account's standard SSM encryption key. IAM permits
+the broker to read only owner/status parameters and the publisher to read only
+app/status parameters; the admin manages provisioning records and both secrets.
 
 Applying this configuration builds three independently versioned base AMIs:
 

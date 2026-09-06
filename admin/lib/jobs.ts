@@ -176,6 +176,7 @@ export async function requestJobLaunch(
   anchorFile?: File | null,
   githubRepositoryId?: number,
   projectName?: string,
+  databaseName?: string,
 ): Promise<Job> {
   let request: RequestInit;
   if (anchorFile) {
@@ -195,6 +196,7 @@ export async function requestJobLaunch(
         typeOfJob,
         githubRepositoryId,
         projectName,
+        databaseName,
       }),
     };
   }
