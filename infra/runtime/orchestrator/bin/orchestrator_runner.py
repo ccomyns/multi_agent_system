@@ -448,6 +448,7 @@ class OrchestratorRun:
 
         config = f"""\
 model = {toml_string(self.orchestrator_model)}
+model_auto_compact_token_limit = 180000
 cli_auth_credentials_store = "file"
 developer_instructions = {toml_string(developer_instructions)}
 
