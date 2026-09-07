@@ -113,6 +113,7 @@ class SoftwareRunnerSeparationTests(unittest.TestCase):
             "aws_imagebuilder_component.software_builder_base_runtime.arn",
             software_recipe,
         )
+        self.assertIn("aws_imagebuilder_component.subagent_browser_tools.arn", software_recipe)
         self.assertNotIn(
             "aws_imagebuilder_component.data_mining_orchestrator_base_runtime.arn",
             software_recipe,
@@ -769,6 +770,7 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
             )
             self.assertEqual(environment["AWS_EC2_METADATA_DISABLED"], "true")
             self.assertEqual(environment["DATABASE_URL"], run.database_url)
+            self.assertEqual(environment["PLAYWRIGHT_BROWSERS_PATH"], "/opt/ms-playwright")
             self.assertEqual(environment["GIT_AUTHOR_NAME"], run.git_author_name)
             self.assertEqual(environment["GIT_AUTHOR_EMAIL"], run.git_author_email)
             self.assertEqual(

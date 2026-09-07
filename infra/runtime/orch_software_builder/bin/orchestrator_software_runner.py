@@ -438,6 +438,7 @@ approval_mode = "approve"
                 "AWS_REGION": self.region,
                 "AWS_EC2_METADATA_DISABLED": "true",
                 "CODEX_HOME": str(self.codex_home),
+                "PLAYWRIGHT_BROWSERS_PATH": "/opt/ms-playwright",
                 **({"DATABASE_URL": self.database_url, "DATABASE_URL_FILE": str(self.database_url_file)} if self.database_url else {}),
                 "GIT_AUTHOR_NAME": self.git_author_name,
                 "GIT_AUTHOR_EMAIL": self.git_author_email,

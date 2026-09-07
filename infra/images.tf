@@ -696,7 +696,7 @@ resource "aws_imagebuilder_image_recipe" "orchestrator" {
 // the same AMI ID and can evolve independently as either runtime changes.
 resource "aws_imagebuilder_image_recipe" "software_builder_orchestrator" {
   name         = "${var.project_name}-software-builder-orchestrator"
-  description  = "Ubuntu software-builder base image with Codex CLI and a launch-time runtime installer."
+  description  = "Ubuntu software-builder base image with Codex CLI, Playwright, Chromium, and a launch-time runtime installer."
   parent_image = data.aws_ami.ubuntu_2404.id
   version      = var.software_builder_orchestrator_image_version
 
@@ -706,6 +706,10 @@ resource "aws_imagebuilder_image_recipe" "software_builder_orchestrator" {
 
   component {
     component_arn = aws_imagebuilder_component.software_builder_base_runtime.arn
+  }
+
+  component {
+    component_arn = aws_imagebuilder_component.subagent_browser_tools.arn
   }
 
   block_device_mapping {

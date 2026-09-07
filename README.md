@@ -534,7 +534,12 @@ Applying this configuration builds three independently versioned base AMIs:
 - Data-mining orchestrator: Codex CLI, DuckDB CLI, Python dependencies, and a
   launch-time runtime downloader.
 - Software-builder orchestrator: an independently versioned base AMI containing
-  Codex CLI, Git, Python dependencies, and a launch-time runtime downloader.
+  Codex CLI, Git, Playwright, Chromium, Python dependencies, and a launch-time
+  runtime downloader. Playwright is installed globally; Chromium is available
+  as `chromium`, with browser binaries in `/opt/ms-playwright`. The runner sets
+  `PLAYWRIGHT_BROWSERS_PATH` for agent commands. Adding these baked dependencies
+  requires building image version `1.0.3` and updating the launch template;
+  updating the runtime ZIP alone does not install them.
 - Data-mining subagent: Codex CLI, DuckDB CLI, Playwright, Chromium, Python
   dependencies, and a launch-time runtime downloader.
 
