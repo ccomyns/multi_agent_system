@@ -182,6 +182,61 @@ class SubagentRunnerTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "valid UTF-8 JSON"):
                     run.run_codex("Investigate revenue quality.")
 
+    def test_missing_results_recovery_conditions_and_validation(self) -> None:
+        cases = [
+            # elapsed, initial results, original exit, recovery output, recovery exit, calls, error
+            (121, None, 0, '{"records": [{"company": "Example"}]}', 0, 2, None),
+            (120, None, 0, None, 0, 1, "required file"),
+            (119, None, 0, None, 0, 1, "required file"),
+            (121, '{"records": []}', 0, None, 0, 1, None),
+            (121, "invalid", 0, None, 0, 1, "valid UTF-8 JSON"),
+            (121, None, 1, None, 0, 1, "non-zero exit status"),
+            (121, None, 0, None, 0, 2, "required file"),
+            (121, None, 0, "invalid", 0, 2, "valid UTF-8 JSON"),
+            (121, None, 0, None, 1, 2, "non-zero exit status"),
+        ]
+        for elapsed, initial, initial_code, recovered, recovery_code, count, error in cases:
+            with self.subTest(case=(elapsed, initial, initial_code, recovered, recovery_code)):
+                with tempfile.TemporaryDirectory() as temporary:
+                    run = self.make_run(Path(temporary))
+                    run.summary_file.write_text("Existing research summary")
+                    source = run.work_dir / "results_agent.json"
+                    source.write_text(recovered or '{"records": []}')
+                    commands = []
+
+                    def complete_codex(command, **kwargs):
+                        commands.append(command)
+                        output = initial if len(commands) == 1 else recovered
+                        if output is not None:
+                            run.results_file.write_text(output)
+                        process = Mock()
+                        process.stdout = io.BytesIO(b'{"type":"turn.completed","usage":{}}\n')
+                        process.wait.return_value = initial_code if len(commands) == 1 else recovery_code
+                        return process
+
+                    with patch.object(runner_module, "time", Mock(monotonic=Mock(side_effect=[10, 10 + elapsed]))), patch.object(
+                        runner_module.subprocess, "Popen", side_effect=complete_codex,
+                    ):
+                        if error:
+                            with self.assertRaisesRegex((RuntimeError, runner_module.subprocess.CalledProcessError), error):
+                                run.run_codex("Research Example firm.")
+                        else:
+                            run.run_codex("Research Example firm.")
+                    self.assertEqual(len(commands), count)
+                    self.assertEqual(run.summary_file.read_text(), "Existing research summary")
+                    self.assertTrue(source.exists())
+                    if count == 2:
+                        prompt = commands[1][-1]
+                        self.assertIn("/summary/results.json", prompt)
+                        self.assertIn("If no preexisting JSON", prompt)
+                        self.assertIn("Do not create a placeholder", prompt)
+                        self.assertEqual(commands[1][commands[1].index("--sandbox") + 1], "workspace-write")
+                        self.assertEqual(commands[1][commands[1].index("--output-last-message") + 1], str(run.work_dir / "codex-recovery-final-message.md"))
+                        self.assertEqual(run.codex_log.read_text().count('"type":"turn.completed"'), 2)
+                        self.assertEqual(run.telemetry.latest["recovery_codex_exit_code"], recovery_code)
+                    if recovered is not None and count == 2 and not error:
+                        self.assertEqual(run.results_file.read_text(), source.read_text())
+
     def test_token_count_events_update_live_usage(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run = self.make_run(Path(temporary))
