@@ -132,7 +132,7 @@ async function parseLaunchRequest(request: Request): Promise<ParsedLaunchJobRequ
     const form = await request.formData();
     const candidate = form.get("anchorFile");
     return {
-      githubRepositoryId: form.get("githubRepositoryId"),
+      githubRepositoryId: form.get("githubRepositoryId") ?? undefined,
       jobId: form.get("jobId"),
       originalTask: form.get("originalTask"),
       projectName: form.get("projectName") ?? undefined,
