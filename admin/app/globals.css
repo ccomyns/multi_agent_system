@@ -569,8 +569,8 @@ h1 {
   overflow: hidden;
 }
 
-.software-builder-panel h1,
-.software-builder-panel h2 {
+.software-builder-panel > h1,
+.software-builder-panel > h2 {
   display: flex;
   width: 100%;
   min-height: 43px;
@@ -4418,8 +4418,8 @@ tbody tr:hover {
     padding: 17px;
   }
 
-  .software-builder-panel h1,
-  .software-builder-panel h2 {
+  .software-builder-panel > h1,
+  .software-builder-panel > h2 {
     padding: 0 17px;
   }
 
