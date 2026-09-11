@@ -133,3 +133,72 @@ export function createDatabase(name: string, description: string) {
     return { database: { name, description: description || null, managed: true } };
   });
 }
+
+export class DatabaseBrowseNotFoundError extends Error {}
+
+// Browsing uses the trusted server credential, never the agent's credentials.
+// Restrict each connection to read-only queries and check the database catalog
+// rather than applying the narrower rules used when creating managed databases.
+async function withDatabaseReader<T>(name: string, action: (client: Client) => Promise<T>) {
+  return withProvisioner(async (provisioner, _ssm, _prefix, connect) => {
+    const found = await provisioner.query(`SELECT 1 FROM pg_database
+      WHERE datname = $1 AND NOT datistemplate AND datallowconn
+      AND datname <> 'rdsadmin' AND has_database_privilege(datname, 'CONNECT')`, [name]);
+    if (!found.rows.length) throw new DatabaseBrowseNotFoundError("Database not found or unavailable.");
+    const client = connect(name);
+    try {
+      await client.connect();
+      await client.query("BEGIN READ ONLY");
+      const result = await action(client);
+      await client.query("COMMIT");
+      return result;
+    } finally {
+      await client.end();
+    }
+  });
+}
+
+export function listDatabaseTables(database: string) {
+  return withDatabaseReader(database, async (client) => {
+    const result = await client.query<import("@/lib/database-types").DatabaseTableSummary>(`
+      SELECT n.nspname AS schema, c.relname AS name,
+        GREATEST(c.reltuples, 0)::float8 AS "estimatedRows"
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition
+        AND n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'
+        AND has_schema_privilege(n.oid, 'USAGE') AND has_table_privilege(c.oid, 'SELECT')
+      ORDER BY n.nspname, c.relname`);
+    return result.rows;
+  });
+}
+
+export function readDatabaseTable(database: string, schema: string, table: string, page: number) {
+  if (!Number.isSafeInteger(page) || page < 1 || page > 1000000) throw new DatabaseConfigurationError("Invalid table page.");
+  return withDatabaseReader(database, async (client): Promise<import("@/lib/database-types").DatabaseTablePage> => {
+    const relation = await client.query<{ oid: number }>(`
+      SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r', 'p')
+        AND NOT c.relispartition AND n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'
+        AND has_schema_privilege(n.oid, 'USAGE') AND has_table_privilege(c.oid, 'SELECT')`, [schema, table]);
+    if (!relation.rows.length) throw new DatabaseBrowseNotFoundError("Table not found or unavailable.");
+    const oid = relation.rows[0].oid;
+    const columns = await client.query<{ name: string; dataType: string; nullable: boolean }>(`
+      SELECT attname AS name, format_type(atttypid, atttypmod) AS "dataType", NOT attnotnull AS nullable
+      FROM pg_attribute WHERE attrelid = $1 AND attnum > 0 AND NOT attisdropped ORDER BY attnum`, [oid]);
+    const keys = await client.query<{ name: string }>(`
+      SELECT a.attname AS name FROM pg_index i
+      CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, position)
+      JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+      WHERE i.indrelid = $1 AND i.indisprimary AND k.position <= i.indnkeyatts ORDER BY k.position`, [oid]);
+    const pageSize = 100;
+    const order = keys.rows.length ? keys.rows.map((key) => identifier(key.name)).join(", ") : "tableoid, ctid";
+    // Text casts preserve bigint/numeric precision and represent JSON, arrays,
+    // timestamps and other PostgreSQL values without lossy JS conversions.
+    const projection = columns.rows.map((column) => `${identifier(column.name)}::text AS ${identifier(column.name)}`).join(", ");
+    const result = await client.query<Record<string, string | null>>(
+      `SELECT ${projection || '*'} FROM ${identifier(schema)}.${identifier(table)} ORDER BY ${order} LIMIT $1 OFFSET $2`,
+      [pageSize + 1, (page - 1) * pageSize],
+    );
+    return { columns: columns.rows, rows: result.rows.slice(0, pageSize), page, pageSize, hasMore: result.rows.length > pageSize };
+  });
+}

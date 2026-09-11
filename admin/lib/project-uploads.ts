@@ -81,3 +81,20 @@ export function isProjectUploadResponse(value: unknown): value is ProjectUploadR
     value.uploadedCount >= 0
   );
 }
+
+export type ProjectDirectoryEntry = {
+  name: string;
+  path: string;
+  kind: "folder" | "file";
+  size: number | null;
+  modifiedAt: string | null;
+};
+
+export type ProjectDirectoryResponse = { entries: ProjectDirectoryEntry[] };
+
+export function validProjectDirectory(project: string, path: string) {
+  return Boolean(project) && !project.includes("/") && !project.includes("\0") &&
+    project !== "." && project !== ".." && !path.includes("\0") &&
+    (path === "" || (!path.startsWith("/") && path.endsWith("/") &&
+      path.slice(0, -1).split("/").every((part) => part !== "" && part !== "." && part !== "..")));
+}

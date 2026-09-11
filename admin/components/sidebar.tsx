@@ -4,7 +4,7 @@ import {
   Bot,
   Database,
   Layers3,
-  Presentation,
+  FolderKanban,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -12,7 +12,7 @@ import { usePathname } from "next/navigation";
 const NAV_ITEMS = [
   { href: "/jobs", label: "Data Miner", Icon: Database },
   { href: "/software", label: "Software Builder", Icon: Bot },
-  { href: "/slides", label: "Slide Deck Builder", Icon: Presentation },
+  { href: "/projects", label: "Project Management", Icon: FolderKanban },
 ] as const;
 
 export function Sidebar() {

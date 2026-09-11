@@ -187,3 +187,27 @@ test("database connection failures do not expose credentials", async () => {
   assert.equal(response.status, 502);
   assert.doesNotMatch(await response.text(), /secret-password/);
 });
+
+test("table API validates selectors, paginates, and masks connection secrets", async () => {
+  const calls = [];
+  const route = load("../app/api/databases/[database]/tables/route.ts", {
+    "@/lib/databases": {
+      DatabaseBrowseNotFoundError: class extends Error {}, DatabaseConfigurationError: class extends Error {},
+      listDatabaseTables: async () => { throw new Error("secret-password"); },
+      readDatabaseTable: async (...args) => { calls.push(args); return { rows: [], page: args[3], hasMore: false }; },
+    },
+  }, { URL });
+  const context = { params: Promise.resolve({ database: "app" }) };
+  for (const query of ["?schema=public", "?table=records", "?schema=public&table=records&page=0", "?page=NaN", "?schema=public&table=%00"]) {
+    assert.equal((await route.GET(new Request(`http://localhost/api/databases/app/tables${query}`), context)).status, 400);
+  }
+  assert.equal(calls.length, 0);
+  const page = await route.GET(new Request("http://localhost/api/databases/app/tables?schema=custom&table=records&page=2"), context);
+  assert.equal(page.status, 200);
+  assert.equal((await page.json()).page, 2);
+  assert.deepEqual(calls, [["app", "custom", "records", 2]]);
+  const response = await route.GET(new Request("http://localhost/api/databases/app/tables"), context);
+  assert.equal(response.status, 502);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.doesNotMatch(await response.text(), /secret-password/);
+});

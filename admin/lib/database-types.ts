@@ -22,3 +22,17 @@ export function isDatabaseSummary(value: unknown): value is DatabaseSummary {
     "managed" in value && typeof value.managed === "boolean" &&
     "description" in value && (value.description === null || typeof value.description === "string");
 }
+
+export interface DatabaseTableSummary {
+  schema: string;
+  name: string;
+  estimatedRows: number;
+}
+
+export interface DatabaseTablePage {
+  columns: Array<{ name: string; dataType: string; nullable: boolean }>;
+  rows: Array<Record<string, string | null>>;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+}

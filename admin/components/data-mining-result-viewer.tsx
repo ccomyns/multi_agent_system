@@ -56,7 +56,11 @@ function renderCell(value: DataMiningCell, column: DataMiningColumn) {
   return String(value);
 }
 
-function ResultTable({ table, labelledBy }: { table: DataMiningTable; labelledBy?: string }) {
+export function ResultTable({ table, labelledBy, pagination }: {
+  table: DataMiningTable;
+  labelledBy?: string;
+  pagination?: { page: number; pageSize: number; hasMore: boolean; onPageChange: (page: number) => void };
+}) {
   const [page, setPage] = useState(1);
   const columns = useMemo(() => table.columns.filter((column) => !column.hidden), [table.columns]);
   const columnWidths = useMemo(
@@ -64,9 +68,9 @@ function ResultTable({ table, labelledBy }: { table: DataMiningTable; labelledBy
     [columns, table],
   );
   const pageCount = Math.max(1, Math.ceil(table.rows.length / ROWS_PER_PAGE));
-  const safePage = Math.min(page, pageCount);
-  const start = (safePage - 1) * ROWS_PER_PAGE;
-  const rows = table.rows.slice(start, start + ROWS_PER_PAGE);
+  const safePage = pagination?.page ?? Math.min(page, pageCount);
+  const start = (safePage - 1) * (pagination?.pageSize ?? ROWS_PER_PAGE);
+  const rows = pagination ? table.rows : table.rows.slice(start, start + ROWS_PER_PAGE);
 
   return (
     <section
@@ -81,7 +85,7 @@ function ResultTable({ table, labelledBy }: { table: DataMiningTable; labelledBy
           <Table2 size={15} aria-hidden="true" />
           <strong>{table.name}</strong>
         </div>
-        <span>{table.rows.length.toLocaleString()} {table.rows.length === 1 ? "row" : "rows"}</span>
+        <span>{pagination ? "Read-only · 100 rows per page" : `${table.rows.length.toLocaleString()} ${table.rows.length === 1 ? "row" : "rows"}`}</span>
       </div>
 
       {table.rows.length === 0 ? (
@@ -126,26 +130,26 @@ function ResultTable({ table, labelledBy }: { table: DataMiningTable; labelledBy
         </div>
       )}
 
-      {table.rows.length > 0 ? (
+      {table.rows.length > 0 || pagination ? (
         <footer className="result-pagination">
           <span>
-            Rows {(start + 1).toLocaleString()}–{Math.min(start + ROWS_PER_PAGE, table.rows.length).toLocaleString()} of {table.rows.length.toLocaleString()}
+            {rows.length ? `Rows ${(start + 1).toLocaleString()}–${(start + rows.length).toLocaleString()}${pagination ? "" : ` of ${table.rows.length.toLocaleString()}`}` : "No rows on this page"}
           </span>
           <div>
             <button
               type="button"
               aria-label="Previous result page"
               disabled={safePage === 1}
-              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              onClick={() => pagination ? pagination.onPageChange(safePage - 1) : setPage((current) => Math.max(1, current - 1))}
             >
               <ChevronLeft size={14} aria-hidden="true" />
             </button>
-            <span>Page {safePage.toLocaleString()} of {pageCount.toLocaleString()}</span>
+            <span>Page {safePage.toLocaleString()}{pagination ? "" : ` of ${pageCount.toLocaleString()}`}</span>
             <button
               type="button"
               aria-label="Next result page"
-              disabled={safePage === pageCount}
-              onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
+              disabled={pagination ? !pagination.hasMore : safePage === pageCount}
+              onClick={() => pagination ? pagination.onPageChange(safePage + 1) : setPage((current) => Math.min(pageCount, current + 1))}
             >
               <ChevronRight size={14} aria-hidden="true" />
             </button>
