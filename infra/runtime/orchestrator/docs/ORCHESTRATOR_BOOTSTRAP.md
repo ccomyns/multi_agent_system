@@ -140,7 +140,7 @@ making fast agents wait behind the slowest agent in a batch.
 Data-mining prompts must state a positive total number of firms or scraping
 assignments. Before acquiring the job lock or launching EC2, the admin server
 uses the OpenAI Responses API to extract that total. Configure `OPENAI_API_KEY`
-on the admin server; `OPENAI_TASK_COUNT_MODEL` defaults to `gpt-4o-mini`.
+on the admin server; `OPENAI_TASK_COUNT_MODEL` defaults to `gpt-5.6-luna`.
 Missing or ambiguous counts reject the launch. Software-builder launches do not
 use this extraction.
 
