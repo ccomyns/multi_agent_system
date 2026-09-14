@@ -238,3 +238,12 @@ variable "subagent_root_volume_size_gb" {
     error_message = "subagent_root_volume_size_gb must be at least 20."
   }
 }
+
+variable "vercel_team_slug" {
+  description = "Vercel team URL slug used by the team-mode OIDC issuer and audience."
+  type        = string
+  validation {
+    condition     = can(regex("^[a-z0-9]+(-[a-z0-9]+)*$", var.vercel_team_slug))
+    error_message = "vercel_team_slug must be the lowercase, hyphen-separated Vercel team URL slug."
+  }
+}

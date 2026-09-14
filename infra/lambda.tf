@@ -212,6 +212,9 @@ resource "aws_lambda_function" "vercel_publisher" {
       JOBS_TABLE_NAME                          = aws_dynamodb_table.jobs.name
       VERCEL_ACCESS_TOKEN_SSM_PARAMETER_NAME   = local.vercel_access_token_ssm_parameter_name
       VERCEL_TEAM_ID                           = var.vercel_team_id
+      VERCEL_S3_READ_ROLE_ARN                  = aws_iam_role.vercel_global_memory_reader.arn
+      GLOBAL_MEMORY_BUCKET_NAME                = aws_s3_bucket.global_memory.id
+      GLOBAL_MEMORY_REGION                     = var.aws_region
       DATABASE_CREDENTIALS_SSM_PREFIX          = "${local.postgresql_ssm_parameter_prefix}/databases"
     }
   }
@@ -220,6 +223,7 @@ resource "aws_lambda_function" "vercel_publisher" {
     aws_cloudwatch_log_group.vercel_publisher,
     aws_iam_role_policy.vercel_publisher,
     aws_iam_role_policy_attachment.vercel_publisher_logs,
+    aws_iam_role_policy.vercel_global_memory_reader,
   ]
 }
 

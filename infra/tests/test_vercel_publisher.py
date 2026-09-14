@@ -36,6 +36,71 @@ publisher = _load_handler()
 
 
 class VercelPublisherHandlerTests(unittest.TestCase):
+    def test_s3_publish_configures_oidc_and_upserts_trusted_values_before_deployment(self):
+        repository = publisher.RepositoryAssignment(123456, "mas-workspace/generated-site",
+                                                    global_memory_project_name="Podcast Project")
+        environment = {"VERCEL_S3_READ_ROLE_ARN": "arn:aws:iam::123456789012:role/reader",
+                       "GLOBAL_MEMORY_REGION": "us-east-1", "GLOBAL_MEMORY_BUCKET_NAME": "global-memory"}
+        calls = []
+        def api(method, path, token, team, **kwargs):
+            calls.append((method, path, kwargs))
+            self.assertEqual(team, self.configuration.team_id)
+            if method == "PATCH":
+                self.assertEqual(kwargs["body"], {"oidcTokenConfig": {"enabled": True, "issuerMode": "team"}})
+                return {"id": "prj_abc123", **kwargs["body"]}
+            if path.endswith("/env"):
+                self.assertEqual(kwargs["query"], {"upsert": "true"})
+                values = {e["key"]: e["value"] for e in kwargs["body"]}
+                self.assertEqual(values, {"AWS_ROLE_ARN": environment["VERCEL_S3_READ_ROLE_ARN"],
+                                         "AWS_REGION": "us-east-1", "S3_BUCKET": "global-memory",
+                                         "S3_PREFIX": "Podcast Project/"})
+                self.assertTrue(all(e["target"] == ["production"] for e in kwargs["body"]))
+                return {"created": kwargs["body"], "failed": []}
+            self.assertEqual(path, "/v13/deployments")
+            return {"id": "dpl_abc123", "readyState": "QUEUED", "projectId": "prj_abc123",
+                    "target": "production", "url": "site.vercel.app"}
+        with patch.dict(os.environ, environment), patch.object(publisher, "_vercel_json", side_effect=api), \
+             patch.object(publisher, "_get_or_create_project", return_value=("prj_abc123", "generated-site")):
+            # A later publish updates the same role/prefix on the same project.
+            for _ in range(2):
+                publisher._publish(self.request, self.configuration, repository, "token")
+        self.assertEqual([method for method, _, _ in calls], ["PATCH", "POST", "POST"] * 2)
+
+    def test_s3_partial_environment_or_oidc_failure_prevents_deployment(self):
+        repository = publisher.RepositoryAssignment(123456, "mas-workspace/generated-site",
+                                                    global_memory_project_name="podcasts")
+        environment = {"VERCEL_S3_READ_ROLE_ARN": "arn:aws:iam::123456789012:role/reader",
+                       "GLOBAL_MEMORY_REGION": "us-east-1", "GLOBAL_MEMORY_BUCKET_NAME": "global-memory"}
+        oidc_ok = {"id": "prj_abc123", "oidcTokenConfig": {"enabled": True, "issuerMode": "team"}}
+        for replies in ([None], [{"id": "prj_abc123", "oidcTokenConfig": {"enabled": True, "issuerMode": "global"}}],
+                        [oidc_ok, {"created": [], "failed": []}],
+                        [oidc_ok, {"failed": [{"error": "upstream details"}]}]):
+            with self.subTest(replies=replies), patch.dict(os.environ, environment), \
+                 patch.object(publisher, "_get_or_create_project", return_value=("prj_abc123", "generated-site")), \
+                 patch.object(publisher, "_vercel_json", side_effect=replies) as api:
+                with self.assertRaises(publisher.PublisherError) as raised:
+                    publisher._publish(self.request, self.configuration, repository, "token")
+                self.assertEqual(raised.exception.code, "s3_environment_failed")
+                self.assertNotIn("upstream details", str(raised.exception))
+                self.assertFalse(any(c.args[1] == "/v13/deployments" for c in api.call_args_list))
+
+    def test_s3_assignment_comes_from_trusted_record_and_rejects_invalid_prefix(self):
+        for name in ("Podcast Project", "../other", "other/path", " "):
+            records = [
+                {"active_job_id": {"S": f"JOB#{self.request.job_id}"}},
+                {"job_id": {"S": self.request.job_id}, "type_of_job": {"S": "software_builder"},
+                 "status": {"S": "running"}, "orchestrator_instance_id": {"S": self.request.instance_id}},
+                {"job_id": {"S": self.request.job_id}, "github_repository_id": {"N": "123456"},
+                 "github_repository_full_name": {"S": "mas-workspace/generated-site"},
+                 "global_memory_project_name": {"S": name}},
+            ]
+            with patch.object(publisher, "_get_item", side_effect=records):
+                if name == "Podcast Project":
+                    self.assertEqual(publisher._assigned_repository(self.request, self.configuration).global_memory_project_name, name)
+                else:
+                    with self.assertRaises(publisher.PublisherError):
+                        publisher._assigned_repository(self.request, self.configuration)
+
     def test_first_framework_deployment_confirms_detection_after_database_upload(self):
         for with_database in (False, True):
             with self.subTest(with_database=with_database):

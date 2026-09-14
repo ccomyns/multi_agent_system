@@ -587,3 +587,58 @@ should eventually use a secured remote backend with locking.
 The S3 audit bucket uses encryption, versioning, and public-access blocking.
 Terraform will not delete a non-empty audit bucket, because `force_destroy` is
 hardcoded to `false` on the bucket.
+
+### Published website access to project files
+
+Terraform manages the Vercel Team OIDC identity provider and the shared
+`vercel-global-memory-reader` role. Set `vercel_team_slug` to the URL slug
+(`cody-cs-projects` in this installation), not the `team_...` identifier.
+The trust policy admits production deployments from any project in that team.
+The role allows `ListBucket`, `GetBucketLocation`, and `GetObject` on the
+existing global-memory bucket; it grants no writes, deletes, or access to other
+buckets. All admitted websites can read all projects in this bucket.
+
+For a software-builder job with a global-memory project assignment, the
+publisher enables Team OIDC and upserts these production environment variables
+before starting a deployment:
+
+- `AWS_ROLE_ARN`: the shared read-only role managed by Terraform.
+- `AWS_REGION`: the region containing the bucket (explicitly overrides Vercel's
+  function-region default).
+- `S3_BUCKET`: the global-memory bucket.
+- `S3_PREFIX`: `<assigned-project>/`, from the trusted repository assignment.
+
+These values are configuration, not access keys. The website exchanges its
+Vercel identity for short-lived credentials at request time. S3_PREFIX guides
+application routing; IAM intentionally does not enforce a per-project boundary.
+Jobs without an S3 project assignment do not install S3 configuration.
+The publisher refuses to start a deployment if the OIDC or environment update
+is not confirmed. Repeated publication updates the existing project's settings.
+
+Generated applications should use server-side S3 clients:
+
+```typescript
+import 'server-only';
+import { S3Client } from '@aws-sdk/client-s3';
+import { awsCredentialsProvider } from '@vercel/oidc-aws-credentials-provider';
+
+const s3 = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: awsCredentialsProvider({ roleArn: process.env.AWS_ROLE_ARN! }),
+});
+```
+
+Store full S3 object keys in database metadata, not expiring presigned URLs.
+Upload images/text and verify their keys before publication. Server routes can
+return the objects directly without S3 CORS configuration. Direct browser
+fetches of presigned URLs require appropriate S3 CORS rules; no public bucket
+policy or browser AWS credentials are needed. Builder-side uploads retain the
+existing project-scoped write credentials and never use the website read role.
+
+Deploy with a reviewed Terraform plan/apply, which creates the provider/role and
+updates the publisher Lambda plus software-builder runtime and launch template.
+No AMI rebuild or IAM user is required. Existing websites get the environment
+configuration on their next publish; their application code must use OIDC.
+
+References: https://vercel.com/docs/oidc/aws and
+https://vercel.com/docs/rest-api/projects/update-an-existing-project.

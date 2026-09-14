@@ -16,3 +16,5 @@ vercel_team_id = "team_REPLACE_WITH_VERCEL_TEAM_ID"
 
 # Optional. The default is /<project_name>/vercel/access-token.
 # vercel_access_token_ssm_parameter_name = "/financial-research-agents/vercel/access-token"
+
+vercel_team_slug = "your-team-slug"

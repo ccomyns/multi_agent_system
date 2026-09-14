@@ -57,6 +57,7 @@ class RepositoryAssignment:
     repository_id: int
     full_name: str
     database_name: str | None = None
+    global_memory_project_name: str | None = None
 
     @property
     def name(self) -> str:
@@ -324,7 +325,14 @@ def _assigned_repository(
     database_name = _string_attribute(assignment, "database_name")
     if database_name is not None and not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", database_name):
         raise PublisherError(409, "invalid_database_assignment", "Invalid database assignment.")
-    return RepositoryAssignment(repository_id=repository_id, full_name=full_name, database_name=database_name)
+    project_name = _string_attribute(assignment, "global_memory_project_name")
+    if project_name is not None and (
+        not re.fullmatch(r"[A-Za-z0-9_.:=+@ -]{1,80}", project_name)
+        or project_name != project_name.strip() or project_name in {".", ".."}
+    ):
+        raise PublisherError(409, "invalid_project_assignment", "Invalid S3 project assignment.")
+    return RepositoryAssignment(repository_id=repository_id, full_name=full_name,
+                                database_name=database_name, global_memory_project_name=project_name)
 
 
 def _vercel_token(parameter_name: str) -> str:
@@ -386,7 +394,7 @@ def _vercel_json(
     team_id: str,
     *,
     query: dict[str, str] | None = None,
-    body: dict[str, Any] | None = None,
+    body: dict[str, Any] | list[dict[str, Any]] | None = None,
     allow_not_found: bool = False,
 ) -> Any:
     parameters = {"teamId": team_id, **(query or {})}
@@ -634,6 +642,47 @@ def _install_database_environment(token: str, configuration: Configuration,
                              "The application database environment could not be configured; deployment was not started.") from None
 
 
+def _install_s3_environment(token: str, configuration: Configuration,
+                            repository: RepositoryAssignment, project_id: str) -> None:
+    if repository.global_memory_project_name is None:
+        return
+    values = {
+        "AWS_ROLE_ARN": _required_environment("VERCEL_S3_READ_ROLE_ARN"),
+        "AWS_REGION": _required_environment("GLOBAL_MEMORY_REGION"),
+        "S3_BUCKET": _required_environment("GLOBAL_MEMORY_BUCKET_NAME"),
+        "S3_PREFIX": repository.global_memory_project_name + "/",
+    }
+    # The shared role is bucket-wide. The prefix is trusted routing metadata,
+    # never an IAM boundary. No builder credentials are transferred to Vercel.
+    try:
+        project = _vercel_json(
+            "PATCH", f"/v9/projects/{urllib_parse.quote(project_id, safe='')}",
+            token, configuration.team_id,
+            body={"oidcTokenConfig": {"enabled": True, "issuerMode": "team"}},
+        )
+        oidc = project.get("oidcTokenConfig", {}) if isinstance(project, dict) else {}
+        if (not isinstance(project, dict) or project.get("id") != project_id
+                or not isinstance(oidc, dict) or oidc.get("enabled") is not True
+                or oidc.get("issuerMode") != "team"):
+            raise ValueError("OIDC configuration not confirmed")
+        result = _vercel_json(
+            "POST", f"/v10/projects/{urllib_parse.quote(project_id, safe='')}/env",
+            token, configuration.team_id, query={"upsert": "true"},
+            body=[{"key": key, "value": value, "type": "plain", "target": ["production"]}
+                  for key, value in values.items()],
+        )
+        created = result.get("created") if isinstance(result, dict) else None
+        if not isinstance(created, list) or result.get("failed"):
+            raise ValueError("S3 environment update failed")
+        confirmed = {entry.get("key") for entry in created if isinstance(entry, dict)
+                     and entry.get("type") == "plain" and entry.get("target") == ["production"]}
+        if not set(values).issubset(confirmed):
+            raise ValueError("S3 environment update not confirmed")
+    except Exception:
+        raise PublisherError(502, "s3_environment_failed",
+                             "The website S3 environment could not be configured; deployment was not started.") from None
+
+
 def _publish(
     request: PublishRequest,
     configuration: Configuration,
@@ -646,6 +695,7 @@ def _publish(
         repository,
     )
     _install_database_environment(token, configuration, repository, project_id)
+    _install_s3_environment(token, configuration, repository, project_id)
     deployment = _vercel_json(
         "POST",
         "/v13/deployments",

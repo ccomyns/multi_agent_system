@@ -163,3 +163,11 @@ output "software_builder_orchestrator_launch_template_version" {
   description = "Default version of the software-builder orchestrator launch template."
   value       = aws_launch_template.software_builder_orchestrator.default_version
 }
+
+output "vercel_oidc_provider_arn" {
+  value = aws_iam_openid_connect_provider.vercel.arn
+}
+
+output "vercel_global_memory_reader_role_arn" {
+  value = aws_iam_role.vercel_global_memory_reader.arn
+}
