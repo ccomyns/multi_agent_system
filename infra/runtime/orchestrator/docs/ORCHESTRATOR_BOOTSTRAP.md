@@ -134,3 +134,44 @@ processes the returned result, and immediately calls `wait_on_any` again. It
 continues waiting while any accepted agent remains even when there are no more
 tasks to launch. This rolling window keeps available capacity filled without
 making fast agents wait behind the slowest agent in a batch.
+
+## Expected launch count and continuation
+
+Data-mining prompts must state a positive total number of firms or scraping
+assignments. Before acquiring the job lock or launching EC2, the admin server
+uses the OpenAI Responses API to extract that total. Configure `OPENAI_API_KEY`
+on the admin server; `OPENAI_TASK_COUNT_MODEL` defaults to `gpt-4o-mini`.
+Missing or ambiguous counts reject the launch. Software-builder launches do not
+use this extraction.
+
+The job stores `expected_subagent_count`; its EC2 instance receives the
+`ExpectedSubagentCount` tag. The data-mining bootstrap reads this tag through
+IMDS and writes `EXPECTED_SUBAGENT_COUNT` into `orchestrator.env`. The runner
+requires it and includes it in the orchestrator instructions. New launches must
+use the updated admin and launch template together; old jobs without this field
+are not migrated.
+
+The runner retains Codex session files (no `--ephemeral`) and captures the
+`thread.started` ID. After a successful Codex process exit, it counts immediate
+`agent-<id>/` prefixes under `jobs/<job_id>/agents/`, using paginated S3 listings.
+If this count is below the expected count, or accepted agents still need result
+collection, it runs `codex exec resume` with that exact session ID, the same
+`CODEX_HOME`, workspace, model, permissions, and MCP server configuration.
+The job remains running and retains its lock throughout these continuations.
+Nonzero process exits still fail the job.
+
+Before resuming, `continuation-state.json` records original assignments,
+accepted/collected agents, and current S3 completion or failure markers. The
+restart prompt directs Codex to continue with unprocessed targets, never repeat
+an accepted assignment, and call `wait_on_any` for all uncollected accepted IDs.
+Already-finished agents can be collected through that same tool. A rejected
+attempt is never included in the wait list. After the count and collection
+checks pass, normal final-output validation and publication run.
+
+This is a folder-count guard, not a unique-target coverage validator: the spawn
+tool writes `input.json` before launch acceptance, and differently worded
+assignments can create separate folders for the same target. Rejected folders
+therefore count toward the threshold. Continuation uses the retained session
+on the same running orchestrator; it does not recover a terminated instance or
+an older ephemeral session. There is no fixed continuation limit while the
+folder-count or collection condition remains unmet.

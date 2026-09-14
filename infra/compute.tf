@@ -59,7 +59,13 @@ locals {
   orchestrator_bootstrap = <<-EOT
     ${local.orchestrator_environment_bootstrap}
 
+    expected_subagent_count="$(curl -fsS \
+      -H "X-aws-ec2-metadata-token: $token" \
+      http://169.254.169.254/latest/meta-data/tags/instance/ExpectedSubagentCount)"
+    [[ "$expected_subagent_count" =~ ^[1-9][0-9]*$ ]]
+
     cat >> /etc/multi-agent/orchestrator.env <<ENV
+    EXPECTED_SUBAGENT_COUNT=$expected_subagent_count
     RUNTIME_ARTIFACT_BUCKET=${aws_s3_bucket.agent_workspace.id}
     RUNTIME_ARTIFACT_BUCKET_OWNER=${data.aws_caller_identity.current.account_id}
     ORCHESTRATOR_RUNTIME_NAME=data-mining

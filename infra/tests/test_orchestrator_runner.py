@@ -54,6 +54,7 @@ class OrchestratorRunnerTests(unittest.TestCase):
         run.orchestrator_instance_id = "i-1234567890abcdef0"
         run.orchestrator_model = "gpt-5.6-terra"
         run.subagent_model = "gpt-5.6-luna"
+        run.expected_subagent_count = 1
         run.jobs_table = "jobs-table"
         run.job_pk = f"JOB#{run.job_id}"
         run.workspace = root / "workspace"
@@ -69,6 +70,9 @@ class OrchestratorRunnerTests(unittest.TestCase):
         run.codex_log = root / "logs" / "codex.log"
         run.workspace_bucket = "agent-workspace-bucket"
         run.s3 = Mock()
+        run.s3.get_paginator.return_value.paginate.return_value = [{
+            "CommonPrefixes": [{"Prefix": f"jobs/{run.job_id}/agents/agent-{'a' * 24}/"}]
+        }]
         run.ddb = Mock()
         run.telemetry = runner_module.TelemetryRecorder(
             s3=run.s3,
@@ -105,6 +109,97 @@ class OrchestratorRunnerTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+
+    def test_resume_preserves_session_and_collects_remaining_agents(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            run.expected_subagent_count = 2
+            a, b = "agent-" + "a" * 24, "agent-" + "b" * 24
+            snapshots = [[a], [a, b], [a, b]]
+            def event(tool, result, task="Research firm A"):
+                return {"type": "item.completed", "item": {
+                    "type": "mcp_tool_call", "server": "subagent_manager", "tool": tool,
+                    "arguments": {"task": task}, "result": {"structured_content": result},
+                }}
+            streams = [
+                [{"type": "thread.started", "thread_id": "session-123"},
+                 event("spawn_agent", {"accepted": True, "agent_id": a})],
+                [event("wait_on_any", {"terminal": {"state": "completed", "agent_id": a}}),
+                 event("spawn_agent", {"accepted": True, "agent_id": b}, "Research firm B")],
+                [event("wait_on_any", {"terminal": {"state": "completed", "agent_id": b}})],
+            ]
+            prompts = []
+            def complete_codex(command, **kwargs):
+                stream = streams.pop(0)
+                stream.append({"type": "turn.completed", "usage": {"input_tokens": 100, "output_tokens": 10}})
+                if "resume" in command:
+                    prompts.append(json.loads((run.workspace / "continuation-state.json").read_text()))
+                    self.assertEqual(command[-2], "session-123")
+                    self.assertIn("Do not reprocess", command[-1])
+                    self.assertIn("wait_on_any", command[-1])
+                self.assertNotIn("--ephemeral", command)
+                self.assertEqual(kwargs["env"]["CODEX_HOME"], str(run.codex_home))
+                self.assertEqual(kwargs["cwd"], run.workspace)
+                if not streams:
+                    self.write_codex_outputs(run)
+                process = Mock()
+                process.stdout = io.BytesIO(("\n".join(json.dumps(e) for e in stream) + "\n").encode())
+                process.wait.return_value = 0
+                return process
+            run.s3.get_object.side_effect = lambda **kw: {"Body": io.BytesIO(json.dumps({"task": kw["Key"]}).encode())}
+            run.s3.list_objects_v2.return_value = {"Contents": []}
+            with patch.object(run, "list_agent_folders", side_effect=snapshots), patch.object(
+                runner_module.subprocess, "Popen", side_effect=complete_codex
+            ) as call:
+                run.run_codex("Research 2 firms")
+            self.assertEqual(call.call_count, 3)
+            self.assertEqual(run.telemetry.latest["usage"]["total_tokens"], 330)
+            self.assertEqual(prompts[0]["uncollected_agent_ids"], [a])
+            self.assertEqual(prompts[1]["uncollected_agent_ids"], [b])
+            self.assertEqual(prompts[1]["agents"][0]["state"], "collected")
+
+    def test_agent_folder_listing_paginates_and_deduplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            prefix = f"jobs/{run.job_id}/agents/"
+            a, b = "agent-" + "a" * 24, "agent-" + "b" * 24
+            run.s3.get_paginator.return_value.paginate.return_value = [
+                {"CommonPrefixes": [{"Prefix": prefix + a + "/"}]},
+                {"CommonPrefixes": [{"Prefix": prefix + b + "/"}, {"Prefix": prefix + a + "/"}]},
+            ]
+            self.assertEqual(run.list_agent_folders(), [a, b])
+            self.assertEqual(run.s3.get_paginator.return_value.paginate.call_args.kwargs["Delimiter"], "/")
+
+    def test_continuation_distinguishes_rejected_active_and_terminal_agents(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            ids = ["agent-" + c * 24 for c in "abcd"]
+            run.accepted_agents = {a: "task" for a in ids[:3]}
+            run.collected_agents = set()
+            run.s3.get_object.side_effect = lambda **kw: {"Body": io.BytesIO(b'{"task":"Original assignment"}')}
+            prefix = f"jobs/{run.job_id}/agents/"
+            run.s3.list_objects_v2.side_effect = [
+                {"Contents": [{"Key": prefix + ids[0] + "/result/completed.md"}]},
+                {"Contents": [{"Key": prefix + ids[1] + "/result/failure.md"}]},
+                {"Contents": []},
+            ]
+            run.continuation_prompt(ids, set(ids[:3]))
+            snapshot = json.loads((run.workspace / "continuation-state.json").read_text())
+            self.assertEqual([a["state"] for a in snapshot["agents"]],
+                             ["completed_uncollected", "failed_uncollected", "active", "not_accepted"])
+            self.assertNotIn(ids[3], snapshot["uncollected_agent_ids"])
+
+    def test_missing_session_id_fails_instead_of_starting_duplicate_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            process = Mock(stdout=io.BytesIO(b""))
+            process.wait.return_value = 0
+            with patch.object(run, "list_agent_folders", return_value=[]), patch.object(
+                runner_module.subprocess, "Popen", return_value=process
+            ) as call:
+                with self.assertRaisesRegex(RuntimeError, "no thread ID"):
+                    run.run_codex("Research 2 firms")
+            self.assertEqual(call.call_count, 1)
 
     def test_finish_job_persists_compact_panel_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

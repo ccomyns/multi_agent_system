@@ -14,6 +14,8 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { NextResponse } from "next/server";
 
+import { extractExpectedSubagentCount, TaskCountError } from "@/lib/task-count";
+
 import { awsClientOptions } from "@/lib/aws";
 import {
   getOrganizationRepository,
@@ -472,6 +474,17 @@ export async function POST(request: Request) {
       );
     }
   }
+  let expectedSubagentCount: number | undefined;
+  if (typeOfJob === "data_mining") {
+    try {
+      expectedSubagentCount = await extractExpectedSubagentCount(originalTask);
+    } catch (error) {
+      return errorResponse(
+        error instanceof TaskCountError ? error.message : "Task-count extraction failed. Please retry the launch.",
+        error instanceof TaskCountError ? error.status : 502,
+      );
+    }
+  }
   const createdAt = new Date().toISOString();
   const documents = documentClient();
   const anchorKey = `jobs/${jobId}/input/anchor-data`;
@@ -501,6 +514,7 @@ export async function POST(request: Request) {
                 pk: jobPk(jobId),
                 job_id: jobId,
                 original_task: originalTask,
+                expected_subagent_count: expectedSubagentCount,
                 database_name: databaseName,
                 type_of_job: typeOfJob,
                 status: "initializing",
@@ -615,6 +629,9 @@ export async function POST(request: Request) {
             ResourceType: "instance",
             Tags: [
               { Key: "Name", Value: `orchestrator-${jobId}` },
+              ...(expectedSubagentCount === undefined ? [] : [
+                { Key: "ExpectedSubagentCount", Value: String(expectedSubagentCount) },
+              ]),
               { Key: "Role", Value: "orchestrator" },
               { Key: "Workload", Value: typeOfJob },
               { Key: "JobId", Value: jobId },
