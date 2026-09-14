@@ -58,6 +58,7 @@ function responseError(value: unknown, fallback: string) {
 export default function SoftwareBuilderPage() {
   const router = useRouter();
   const [idea, setIdea] = useState("");
+  const [reprompt, setReprompt] = useState("");
   const [database, setDatabase] = useState<DatabaseSelection | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const [repositoryPickerOpen, setRepositoryPickerOpen] = useState(false);
@@ -477,34 +478,14 @@ export default function SoftwareBuilderPage() {
       <Sidebar />
 
       <div className="app-body">
-        <main className="software-builder-main grid-surface">
+        <main className="software-builder-main">
           <div className="software-builder-workspace">
             <div className="software-builder-panels">
-              <section className="software-builder-panel software-idea-panel">
-                <h1>DESCRIBE YOUR IDEA</h1>
+              <section className="software-builder-panel software-runtime-panel" aria-labelledby="software-runtime-heading">
+                <h1 id="software-runtime-heading">CONFIGURE RUNTIME ENVIRONMENT</h1>
                 <div className="software-builder-panel-body">
-                  <label className="sr-only" htmlFor="software-idea">
-                    Describe your software idea
-                  </label>
-                  <textarea
-                    id="software-idea"
-                    data-testid="software-idea"
-                    placeholder="Describe what you would like to build…"
-                    value={idea}
-                    maxLength={4000}
-                    disabled={submitting || Boolean(activeJob)}
-                    onChange={(event) => {
-                      setIdea(event.target.value);
-                      setSubmitError(null);
-                      setSubmitNotice(null);
-                    }}
-                  />
-                </div>
-              </section>
-
-              <section className="software-builder-panel software-repos-panel">
-                <h2>GITHUB REPOS</h2>
-                <div className="software-builder-panel-body">
+                  <section className="software-runtime-section" aria-labelledby="software-repo-heading">
+                    <h2 id="software-repo-heading">GITHUB REPO</h2>
                   <div className="software-repo-controls">
                     <button
                       ref={createRepositoryButtonRef}
@@ -514,7 +495,7 @@ export default function SoftwareBuilderPage() {
                       onClick={openCreateRepository}
                     >
                       <span>
-                        <strong>Create a new repo</strong>
+                        <strong>Create a New Repo</strong>
                         {pendingRepository ? (
                           <small>{pendingRepository.name}</small>
                         ) : null}
@@ -580,7 +561,7 @@ export default function SoftwareBuilderPage() {
                                 type="button"
                                 onClick={() => void loadRepositories()}
                               >
-                                Try again
+                                Try Again
                               </button>
                             </div>
                           ) : repositories.length === 0 ? (
@@ -639,21 +620,9 @@ export default function SoftwareBuilderPage() {
                     </div>
                   ) : null}
 
-                  {submitError || jobsError ? (
-                    <div className="software-repository-submit-state is-error" role="alert">
-                      {submitError ?? jobsError}
-                    </div>
-                  ) : submitNotice ? (
-                    <div className="software-repository-submit-state" role="status">
-                      {submitNotice}
-                    </div>
-                  ) : null}
-                </div>
-              </section>
-
-              <section className="software-builder-panel software-runtime-panel">
-                <h2>CONFIGURE RUNTIME ENVIRONMENT</h2>
-                <div className="software-builder-panel-body">
+                  </section>
+                  <section className="software-runtime-section" aria-labelledby="software-storage-heading">
+                    <h2 id="software-storage-heading">FILE STORAGE</h2>
                   <div className="software-repo-controls">
                     <button
                       ref={createProjectButtonRef}
@@ -663,7 +632,7 @@ export default function SoftwareBuilderPage() {
                       onClick={openCreateProject}
                     >
                       <span>
-                        <strong>Create a new project</strong>
+                        <strong>Create a New Project</strong>
                         {pendingProject ? <small>{pendingProject.name}</small> : null}
                       </span>
                       <FolderPlus size={17} strokeWidth={1.8} aria-hidden="true" />
@@ -686,7 +655,7 @@ export default function SoftwareBuilderPage() {
                         onClick={toggleContextMenu}
                       >
                         <span>
-                          <strong>Pick an existing project</strong>
+                          <strong>Pick an Existing Project</strong>
                           {selectedProject ? <small>{selectedProject}</small> : null}
                         </span>
                         <ChevronDown
@@ -723,7 +692,7 @@ export default function SoftwareBuilderPage() {
                                 type="button"
                                 onClick={() => void loadProjects()}
                               >
-                                Try again
+                                Try Again
                               </button>
                             </div>
                           ) : projects.length === 0 ? (
@@ -773,19 +742,69 @@ export default function SoftwareBuilderPage() {
                       </button>
                     </div>
                   ) : null}
+                  </section>
+                  <section className="software-runtime-section" aria-labelledby="software-database-heading">
+                    <h2 id="software-database-heading">DATABASE</h2>
                   <DatabaseControls value={database} disabled={submitting} onChange={(selection) => {
                     setDatabase(selection);
                     setSubmitError(null);
                     setSubmitNotice(null);
                   }} />
+                  </section>
+                  <section className="software-runtime-section" aria-labelledby="software-mcp-heading">
+                    <h2 id="software-mcp-heading">MCPs</h2>
+                    <ul className="software-mcp-grid" aria-label="Configured MCP integrations">
+                      <li className="software-mcp-card">
+                        <strong>Vercel Publisher</strong>
+                      </li>
+                      <li className="software-mcp-card software-mcp-placeholder">
+                        <strong>+ MCP</strong>
+                      </li>
+                    </ul>
+                  </section>
                 </div>
               </section>
-            </div>
-
-            <footer className="software-builder-actions">
-              <button className="software-builder-footer-button" type="button">
-                PAST JOBS
-              </button>
+              <section className="software-builder-panel software-idea-panel" aria-labelledby="software-idea-heading">
+                <h2 id="software-idea-heading">DESCRIBE YOUR IDEA</h2>
+                <div className="software-builder-panel-body">
+                  <label className="software-prompt-label" htmlFor="software-idea">
+                    PROMPT
+                  </label>
+                  <textarea
+                    id="software-idea"
+                    data-testid="software-idea"
+                    placeholder="Describe what you would like to build…"
+                    value={idea}
+                    maxLength={4000}
+                    disabled={submitting || Boolean(activeJob)}
+                    onChange={(event) => {
+                      setIdea(event.target.value);
+                      setSubmitError(null);
+                      setSubmitNotice(null);
+                    }}
+                  />
+                  <label className="software-prompt-label software-reprompt-label" htmlFor="software-reprompt">
+                    REPROMPT
+                  </label>
+                  <textarea
+                    id="software-reprompt"
+                    data-testid="software-reprompt"
+                    placeholder="Describe the overarching goal or a message of encouragement..."
+                    value={reprompt}
+                    maxLength={4000}
+                    disabled={submitting || Boolean(activeJob)}
+                    onChange={(event) => setReprompt(event.target.value)}
+                  />
+                  {submitError || jobsError ? (
+                    <div className="software-repository-submit-state is-error" role="alert">
+                      {submitError ?? jobsError}
+                    </div>
+                  ) : submitNotice ? (
+                    <div className="software-repository-submit-state" role="status">
+                      {submitNotice}
+                    </div>
+                  ) : null}
+                  <footer className="software-builder-actions">
               <button
                 className="software-builder-submit"
                 data-testid="software-builder-submit"
@@ -801,17 +820,21 @@ export default function SoftwareBuilderPage() {
               >
                 {submitting
                   ? database?.create
-                    ? "CREATING DATABASE…"
+                    ? "Creating Database…"
                     : pendingRepository && pendingProject
-                    ? "CREATING SETUP…"
+                    ? "Creating Setup…"
                     : pendingRepository
-                      ? "CREATING REPO…"
+                      ? "Creating Repo…"
                       : pendingProject
-                        ? "CREATING PROJECT…"
-                        : "LAUNCHING…"
-                  : "SUBMIT"}
+                        ? "Creating Project…"
+                        : "Launching…"
+                  : "Submit"}
               </button>
-            </footer>
+                  </footer>
+                </div>
+              </section>
+
+            </div>
           </div>
         </main>
       </div>
@@ -926,7 +949,7 @@ export default function SoftwareBuilderPage() {
                   disabled={!repositoryName.trim()}
                 >
                   <GitBranch size={15} strokeWidth={1.9} aria-hidden="true" />
-                  Save details
+                  Save Details
                 </button>
               </footer>
             </form>
@@ -1044,7 +1067,7 @@ export default function SoftwareBuilderPage() {
                   disabled={!projectName.trim()}
                 >
                   <FolderPlus size={15} strokeWidth={1.9} aria-hidden="true" />
-                  Save details
+                  Save Details
                 </button>
               </footer>
             </form>

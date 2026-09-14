@@ -532,26 +532,22 @@ h1 {
 .software-builder-main {
   flex: 1;
   min-height: 0;
-  padding: 36px clamp(24px, 4vw, 64px) 30px;
+  padding: 36px;
   overflow: auto;
+  background: var(--background);
 }
 
 .software-builder-workspace {
-  display: flex;
-  width: min(980px, 100%);
-  min-height: 100%;
-  flex-direction: column;
-  padding: 24px;
+  width: 100%;
+  max-width: 1600px;
   margin: 0 auto;
-  background: #ffffff;
-  border: 1px solid #d3deea;
-  border-radius: 20px;
-  box-shadow: 0 20px 54px rgb(42 76 116 / 10%);
 }
 
 .software-builder-panels {
   display: grid;
-  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-height: calc(100dvh - 72px);
+  gap: 24px;
 }
 
 .software-builder-panel,
@@ -565,8 +561,115 @@ h1 {
 }
 
 .software-builder-panel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
   padding: 0;
-  overflow: hidden;
+  border: 1px solid var(--blue);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+}
+
+.software-builder-panel > h1,
+.software-builder-panel > h2 {
+  flex-shrink: 0;
+  border-radius: 20px 20px 0 0;
+}
+
+.software-runtime-panel .software-builder-panel-body {
+  display: grid;
+  flex: 1;
+  align-content: start;
+  gap: 24px;
+}
+
+.software-runtime-section {
+  min-width: 0;
+}
+
+.software-runtime-section > h2 {
+  margin: 0 0 12px;
+  color: var(--text-strong);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.075em;
+}
+
+.software-runtime-section .software-database-controls {
+  margin-top: 0;
+}
+
+.software-runtime-section .software-repo-controls {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--surface-muted);
+}
+
+.software-runtime-section .software-create-repository-trigger,
+.software-runtime-section .software-repository-picker-panel {
+  min-height: 46px;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.software-runtime-section .software-repository-picker-panel.is-open {
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.software-mcp-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  list-style: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--surface-muted);
+}
+
+.software-mcp-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.software-mcp-placeholder {
+  border-style: dashed;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.software-idea-panel .software-builder-panel-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.software-prompt-label {
+  margin-bottom: 12px;
+  color: var(--text-strong);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.075em;
+}
+
+.software-reprompt-label {
+  margin-top: 28px;
 }
 
 .software-builder-panel > h1,
@@ -590,7 +693,9 @@ h1 {
 
 .software-idea-panel textarea {
   width: 100%;
-  min-height: 154px;
+  min-height: 200px;
+  height: 220px;
+  flex-shrink: 0;
   padding: 14px 15px;
   resize: vertical;
   color: var(--text-strong);
@@ -1056,13 +1161,12 @@ h1 {
 
 .software-builder-actions {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
   margin-top: auto;
   padding-top: 28px;
 }
 
-.software-builder-footer-button,
 .software-builder-submit {
   min-height: 42px;
   min-width: 124px;
@@ -1083,7 +1187,6 @@ h1 {
     transform 140ms ease;
 }
 
-.software-builder-footer-button:hover,
 .software-builder-submit:hover:not(:disabled) {
   background: var(--blue-strong);
   border-color: var(--blue-strong);
@@ -4406,12 +4509,16 @@ tbody tr:hover {
   }
 
   .software-builder-main {
-    padding: 24px 16px 20px;
+    padding: 24px 16px;
   }
 
-  .software-builder-workspace {
-    padding: 16px;
-    border-radius: 16px;
+  .software-builder-panels {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .software-idea-panel {
+    min-height: 440px;
   }
 
   .software-builder-panel-body {

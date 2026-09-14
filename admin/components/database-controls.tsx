@@ -95,7 +95,7 @@ export function DatabaseControls({ value, onChange, disabled }: {
         </button>
         {pickerOpen ? <div className="software-context-menu" id="software-database-menu" data-testid="database-picker-menu">
           {loading ? <div className="software-context-state" role="status">Loading databases…</div>
-            : error ? <div className="software-context-state is-error" role="alert"><span>{error}</span><button type="button" onClick={() => void load()}>Try again</button></div>
+            : error ? <div className="software-context-state is-error" role="alert"><span>{error}</span><button type="button" onClick={() => void load()}>Try Again</button></div>
             : databases.length === 0 ? <div className="software-context-state">No databases found.</div>
             : <div className="software-context-options software-database-options">
               {databases.map((database) => (
@@ -133,7 +133,7 @@ export function DatabaseControls({ value, onChange, disabled }: {
           </div>
           <div className="software-repository-privacy-note"><Database size={15} aria-hidden="true" /><span><strong>Created on Submit</strong>Save these details now. The database will only be created when you click Submit.</span></div>
           {formError ? <div className="software-repository-form-error" role="alert">{formError}</div> : null}
-          <footer className="software-repository-modal-actions"><button className="software-repository-cancel" type="button" onClick={closeModal}>Cancel</button><button className="software-repository-create" type="submit" disabled={!name.trim()}>Save details</button></footer>
+          <footer className="software-repository-modal-actions"><button className="software-repository-cancel" type="button" onClick={closeModal}>Cancel</button><button className="software-repository-create" type="submit" disabled={!name.trim()}>Save Details</button></footer>
         </form>
       </section>
     </div> : null}
