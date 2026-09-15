@@ -13,7 +13,7 @@ class SoftwareBuilderAdminTests(unittest.TestCase):
 
         self.assertIn('data-testid="software-idea"', page)
         self.assertIn("idea.trim().length === 0", page)
-        self.assertIn("Will be created only when you click Submit.", page)
+        self.assertIn("Created on Submit", page)
         self.assertLess(
             page.index('fetch("/api/github/repositories"'),
             page.index("requestJobLaunch("),

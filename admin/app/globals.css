@@ -894,53 +894,6 @@ h1 {
   box-shadow: inset 3px 0 0 var(--blue);
 }
 
-.software-repository-pending {
-  display: flex;
-  min-height: 48px;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 11px;
-  margin-top: 12px;
-  color: var(--blue-strong);
-  background: var(--surface-blue);
-  border: 1px solid #cbdff2;
-  border-radius: 10px;
-}
-
-.software-repository-pending > svg {
-  flex: 0 0 auto;
-}
-
-.software-repository-pending > span {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  gap: 2px;
-  color: #58718c;
-  font-size: 9px;
-  line-height: 1.35;
-}
-
-.software-repository-pending strong {
-  overflow: hidden;
-  color: var(--text-strong);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.software-repository-pending > button {
-  flex: 0 0 auto;
-  padding: 5px 8px;
-  color: var(--blue-strong);
-  background: #ffffff;
-  border: 1px solid #b9d1e8;
-  border-radius: 6px;
-  cursor: pointer;
-  font: inherit;
-  font-size: 8px;
-  font-weight: 760;
-}
 
 .software-repository-submit-state {
   padding: 9px 11px;
@@ -962,7 +915,6 @@ h1 {
 .software-create-repository-trigger:focus-visible,
 .software-repository-picker-panel:focus-visible,
 .software-repository-picker-menu button:focus-visible,
-.software-repository-pending > button:focus-visible,
 .software-context-panel:focus-visible,
 .software-context-menu button:focus-visible,
 .software-builder-footer-button:focus-visible,

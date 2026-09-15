@@ -608,18 +608,6 @@ export default function SoftwareBuilderPage() {
                     </div>
                   </div>
 
-                  {pendingRepository ? (
-                    <div className="software-repository-pending" role="status">
-                      <GitBranch size={16} strokeWidth={1.8} aria-hidden="true" />
-                      <span>
-                        <strong>{pendingRepository.name}</strong>
-                        Will be created only when you click Submit.
-                      </span>
-                      <button type="button" onClick={openCreateRepository}>
-                        Edit
-                      </button>
-                    </div>
-                  ) : null}
 
                   </section>
                   <section className="software-runtime-section" aria-labelledby="software-storage-heading">
@@ -731,18 +719,6 @@ export default function SoftwareBuilderPage() {
                     </div>
                   </div>
 
-                  {pendingProject ? (
-                    <div className="software-repository-pending" role="status">
-                      <FolderPlus size={16} strokeWidth={1.8} aria-hidden="true" />
-                      <span>
-                        <strong>{pendingProject.name}</strong>
-                        Will be created only when you click Submit.
-                      </span>
-                      <button type="button" onClick={openCreateProject}>
-                        Edit
-                      </button>
-                    </div>
-                  ) : null}
                   </section>
                   <section className="software-runtime-section" aria-labelledby="software-database-heading">
                     <h2 id="software-database-heading">DATABASE</h2>

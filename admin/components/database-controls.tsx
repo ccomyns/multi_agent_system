@@ -94,6 +94,9 @@ export function DatabaseControls({ value, onChange, disabled }: {
           <ChevronDown size={17} aria-hidden="true" />
         </button>
         {pickerOpen ? <div className="software-context-menu" id="software-database-menu" data-testid="database-picker-menu">
+          {value ? <div className="software-context-options software-database-options">
+            <button type="button" disabled={disabled} onClick={() => { onChange(null); setPickerOpen(false); }}>Clear database selection</button>
+          </div> : null}
           {loading ? <div className="software-context-state" role="status">Loading databases…</div>
             : error ? <div className="software-context-state is-error" role="alert"><span>{error}</span><button type="button" onClick={() => void load()}>Try Again</button></div>
             : databases.length === 0 ? <div className="software-context-state">No databases found.</div>
@@ -116,7 +119,6 @@ export function DatabaseControls({ value, onChange, disabled }: {
         </div> : null}
       </div>
     </div>
-    {value ? <div className="software-repository-pending" role="status"><Database size={16} aria-hidden="true" /><span><strong>{value.name}</strong>{value.create ? "Will be created only when you click Submit." : "Selected runtime database."}</span>{value.create ? <button type="button" disabled={disabled} onClick={openModal}>Edit</button> : null}<button type="button" disabled={disabled} onClick={() => onChange(null)}>Clear</button></div> : null}
     {modalOpen ? <div className="software-repository-modal-backdrop" onMouseDown={closeModal}>
       <section ref={modal} className="software-repository-modal" data-testid="create-database-dialog" role="dialog" aria-modal="true" aria-labelledby="software-database-title" onMouseDown={(event) => event.stopPropagation()}>
         <header className="software-repository-modal-header"><div className="software-repository-modal-heading"><Database size={21} aria-hidden="true" /><h2 id="software-database-title">New Database</h2></div><button type="button" aria-label="Close create database dialog" onClick={closeModal}><X size={17} /></button></header>
