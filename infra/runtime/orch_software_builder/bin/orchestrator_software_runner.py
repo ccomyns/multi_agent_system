@@ -22,6 +22,7 @@ from urllib.parse import quote
 import boto3
 
 from agent_telemetry import TelemetryRecorder
+from codex_app_server import AppServerClient, AppServerError, SoftwareConversation
 from software_github_credentials import (
     RepositoryCredentials,
     request_repository_credentials,
@@ -78,6 +79,8 @@ def string_attribute(item: dict[str, Any], name: str) -> str | None:
 
 class SoftwareOrchestratorRun:
     def __init__(self) -> None:
+        from botocore.config import Config
+
         if required_env("TYPE_OF_JOB") != "software_builder":
             raise RuntimeError("the software runner only accepts TYPE_OF_JOB=software_builder")
 
@@ -135,7 +138,9 @@ class SoftwareOrchestratorRun:
             )
         )
 
-        self.ddb = boto3.client("dynamodb", region_name=self.region)
+        self.ddb = boto3.client("dynamodb", region_name=self.region,
+                                config=Config(connect_timeout=3, read_timeout=5,
+                                              retries={"max_attempts": 2}))
         self.s3 = boto3.client("s3", region_name=self.region)
         self.ssm = boto3.client("ssm", region_name=self.region)
         self.lambda_client = boto3.client("lambda", region_name=self.region)
@@ -150,6 +155,7 @@ class SoftwareOrchestratorRun:
         )
 
         self.original_auth = ""
+        self.reprompt = ""
         self.database_url = ""
         self.selected_database_name = ""
         self.repository_id: int | None = None
@@ -197,7 +203,22 @@ class SoftwareOrchestratorRun:
             if not task:
                 raise RuntimeError("job has no original_task")
             self.selected_database_name = string_attribute(item, "database_name") or ""
+            self.reprompt = (string_attribute(item, "reprompt") or "").strip()
             return task
+
+    def end_requested(self) -> bool:
+        try:
+            response = self.ddb.get_item(
+                TableName=self.jobs_table, Key={"pk": {"S": self.job_pk}},
+                ConsistentRead=True,
+            )
+        except Exception as error:
+            raise AppServerError("could not read the job's end request") from error
+        item = response.get("Item", {})
+        if (string_attribute(item, "orchestrator_instance_id") != self.orchestrator_instance_id
+                or string_attribute(item, "status") != "running"):
+            raise RuntimeError("software-builder job is no longer owned and running")
+        return bool(string_attribute(item, "end_requested_at"))
 
     def install_auth(self) -> None:
         response = self.ssm.get_parameter(Name=self.auth_parameter, WithDecryption=True)
@@ -392,6 +413,7 @@ class SoftwareOrchestratorRun:
 model = {toml_string(self.orchestrator_model)}
 cli_auth_credentials_store = "file"
 developer_instructions = {toml_string(developer_instructions)}
+web_search = "live"
 
 [mcp_servers.vercel_publisher]
 command = "/bin/bash"
@@ -477,7 +499,8 @@ approval_mode = "approve"
             "repository. No subagent tools are configured for this runner. Inspect the existing "
             "project before editing, implement the user's task, and run the relevant tests. A "
             "Vercel publisher tool named publish_site is available. Use it only when the user "
-            "asks for a public Vercel deployment, and only after every intended change is "
+            "asks for a public Vercel deployment or the End Job wrap-up requests publication "
+            "of an applicable website, and only after every intended change is "
             "committed and pushed. Report the returned public_url to the user. "
             + (
                 "DATABASE_URL contains the owner credential for your assigned PostgreSQL database. "
@@ -490,13 +513,22 @@ approval_mode = "approve"
             )
             + (
                 f"A persistent project workspace is available at {self.project_s3_uri}. "
+                f"Your S3 write access is limited to s3://{self.global_memory_bucket}/{self.project_prefix}; "
+                "you cannot write outside this assigned project prefix. "
                 "The AWS environment is already configured with short-lived credentials that "
                 "allow unrestricted object reads and writes only inside that exact S3 project "
                 "prefix. You may create, overwrite, or delete objects there as needed, but do "
                 "not attempt to access another global-memory location. "
                 "For website images, transcripts, and other large files, upload the actual files "
                 "to this prefix before publishing and store their full S3 object keys and metadata "
-                "in the assigned database. Verify referenced objects exist and wire them to the "
+                "in the assigned database. When creating RDS tables for fast rendering of S3 "
+                "content metadata, preserve the complete storage location in each object's row: "
+                f"store s3_bucket={self.global_memory_bucket!r} and an s3_key that starts with "
+                f"{self.project_prefix!r}, for example {self.project_prefix + 'images/example.png'!r}. "
+                "Do not omit the project prefix or store only a filename. The bucket name belongs "
+                "in s3_bucket, not in s3_key; together they form s3://<s3_bucket>/<s3_key>. "
+                "Use these stored values when retrieving content, without prepending the project "
+                "prefix a second time. Verify referenced objects exist and wire them to the "
                 "correct pages. Do not store expiring signed URLs as permanent database references. "
                 "For this assigned project, publish_site automatically enables Team OIDC and sets "
                 "production AWS_ROLE_ARN, AWS_REGION, S3_BUCKET, and S3_PREFIX on Vercel. "
@@ -515,7 +547,17 @@ approval_mode = "approve"
             )
             + "Before finishing, git add and commit every intended change, push the current branch "
             "to origin, verify that the pushed commit is present on origin, and leave the working "
-            "tree clean."
+            "tree clean. "
+            + (
+                "This job runs continuously in one persistent conversation. "
+                "After each normal turn, the runtime will ask you to continue with the user's REPROMPT. "
+                if self.reprompt else
+                "This job runs for a single turn. Complete the task and provide your final response "
+                "in this turn; the runtime will not automatically reprompt you. "
+            )
+            + "Choose useful next steps without waiting for clarification when "
+            "reasonable assumptions allow progress. When the user ends the job, stop "
+            "expanding scope and follow the final wrap-up instructions."
         )
         self.telemetry.record(
             "codex_config_started",
@@ -524,58 +566,28 @@ approval_mode = "approve"
         self.write_codex_config(developer_instructions)
         self.telemetry.record("codex_config_finished", "Codex configuration materialized")
 
-        command = [
-            "codex",
-            "--search",
-            "--ask-for-approval",
-            "never",
-            "exec",
-            "--json",
-            "--model",
-            self.orchestrator_model,
-            "--sandbox",
-            "danger-full-access",
-            "--ephemeral",
-            "--cd",
-            str(self.repository_root),
-            "--output-last-message",
-            str(self.final_message),
-            task,
-        ]
-        LOG.info(
-            "starting software-builder Codex for job %s in %s",
-            self.job_id,
-            self.repository_full_name,
-        )
         self.codex_log.parent.mkdir(parents=True, exist_ok=True)
-        started_at = utc_now()
         self.telemetry.record(
-            "codex_started",
-            "software-builder codex exec started",
-            codex_started_at=started_at,
+            "codex_started", "software-builder codex app-server started",
+            codex_started_at=utc_now(),
         )
         with self.codex_log.open("ab", buffering=0) as codex_log:
-            process = subprocess.Popen(
-                command,
-                env=self.codex_environment(),
-                stdout=subprocess.PIPE,
-                stderr=codex_log,
+            conversation = SoftwareConversation(
+                state_file=self.job_root / "codex-conversation.json",
+                final_file=self.final_message,
+                task=task, reprompt=self.reprompt, model=self.orchestrator_model,
+                cwd=self.repository_root, should_end=self.end_requested,
+                checkpoint=self.telemetry.record,
+                client_factory=lambda: AppServerClient(
+                    cwd=self.repository_root, env=self.codex_environment(),
+                    log=codex_log, on_event=self.telemetry.append_raw_event,
+                ),
             )
-            if process.stdout is None:
-                raise RuntimeError("Codex JSON event stream was not available")
-            for raw_line in iter(process.stdout.readline, b""):
-                codex_log.write(raw_line)
-                self.telemetry.append_raw_event(raw_line.decode("utf-8", errors="replace"))
-            return_code = process.wait()
-
+            conversation.run()
         self.telemetry.record(
-            "codex_finished",
-            f"codex exit code {return_code}",
-            codex_finished_at=utc_now(),
-            codex_exit_code=return_code,
+            "codex_finished", "Codex finished; app-server stopped",
+            codex_finished_at=utc_now(), codex_exit_code=0,
         )
-        if return_code != 0:
-            raise subprocess.CalledProcessError(return_code, command)
         read_utf8(self.final_message, MAX_TEXT_OUTPUT_BYTES, "final.md")
 
     def verify_repository_published(self) -> dict[str, Any]:

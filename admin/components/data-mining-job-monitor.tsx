@@ -124,7 +124,7 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
   }, [refresh]);
 
   async function endJob() {
-    if (!snapshot || snapshot.isTerminal || ending) {
+    if (!snapshot || snapshot.isTerminal || snapshot.job.endRequestedAt || ending) {
       return;
     }
     setEnding(true);
@@ -223,7 +223,7 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
           <div className="orchestrator-progress-block">
             <div className="orchestrator-progress" aria-live="polite">
               <span className={`orchestrator-progress-dot progress-${progress}`} aria-hidden="true" />
-              {progressLabel(progress, jobType)}
+              {snapshot.job.endRequestedAt && !snapshot.isTerminal ? "Wrapping up" : progressLabel(progress, jobType)}
             </div>
             <div className="agent-compact-telemetry">
               <span>{orchestratorFacts.timingText}</span>
@@ -241,10 +241,10 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
               }}
               onPointerDown={(event) => event.stopPropagation()}
               onKeyDown={(event) => event.stopPropagation()}
-              disabled={ending}
+              disabled={ending || Boolean(snapshot.job.endRequestedAt)}
             >
               <Square size={12} strokeWidth={2.2} aria-hidden="true" />
-              {ending ? "Ending…" : "End Job"}
+              {snapshot.job.endRequestedAt ? "Wrapping up…" : ending ? "Requesting…" : "End Job"}
             </button>
           ) : null}
         </div>

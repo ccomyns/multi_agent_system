@@ -39,6 +39,7 @@ type JobItem = {
   orchestrator_instance_id?: unknown;
   launched_at?: unknown;
   finished_at?: unknown;
+  end_requested_at?: unknown;
   codex_started_at?: unknown;
   runtime_seconds?: unknown;
   total_tokens?: unknown;
@@ -109,6 +110,7 @@ function toJob(item: Record<string, unknown> | undefined): Job | null {
         : null,
     launchedAt: typeof record.launched_at === "string" ? record.launched_at : null,
     finishedAt: typeof record.finished_at === "string" ? record.finished_at : null,
+    endRequestedAt: typeof record.end_requested_at === "string" ? record.end_requested_at : null,
   };
 }
 

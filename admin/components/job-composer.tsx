@@ -194,10 +194,10 @@ export function JobComposer() {
                 type="button"
                 className="secondary-button job-end-button"
                 onClick={() => void end(job.jobId)}
-                disabled={pending}
+                disabled={pending || Boolean(job.endRequestedAt)}
               >
                 <Square size={13} strokeWidth={2.2} aria-hidden="true" />
-                {pending ? "Ending…" : "End job and release the lock"}
+                {job.endRequestedAt ? "Wrapping up…" : pending ? "Requesting…" : job.typeOfJob === "software_builder" ? "End job and wrap up" : "End job and release the lock"}
               </button>
             </div>
           </div>

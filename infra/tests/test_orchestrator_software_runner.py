@@ -586,6 +586,7 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
             orchestrator_instance_id=run.orchestrator_instance_id,
         )
         run.original_auth = ""
+        run.reprompt = "Keep improving the dashboard."
         run.database_url = "postgresql://user:password@database.example.com:5432/app"
         run.repository_id = None
         run.repository_full_name = None
@@ -671,16 +672,34 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
                     "status": {"S": "running"},
                     "orchestrator_instance_id": {"S": run.orchestrator_instance_id},
                     "original_task": {"S": "Build a small API."},
+                    "reprompt": {"S": "Keep improving API reliability."},
                 }
             }
             self.assertEqual(
                 run.load_task(timeout_seconds=0),
                 "Build a small API.",
             )
+            self.assertEqual(run.reprompt, "Keep improving API reliability.")
+            self.assertFalse(run.end_requested())
+            run.ddb.get_item.return_value["Item"]["end_requested_at"] = {"S": "2026-09-14T12:00:00Z"}
+            self.assertTrue(run.end_requested())
 
             run.ddb.get_item.return_value["Item"]["type_of_job"] = {"S": "data_mining"}
             with self.assertRaisesRegex(RuntimeError, "not a software-builder job"):
                 run.load_task(timeout_seconds=0)
+
+    def test_control_read_failure_is_retryable_but_lost_ownership_is_not(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            run.ddb.get_item.side_effect = RuntimeError("temporary database outage")
+            with self.assertRaises(runner_module.AppServerError):
+                run.end_requested()
+            run.ddb.get_item.side_effect = None
+            run.ddb.get_item.return_value = {"Item": {
+                "status": {"S": "running"}, "orchestrator_instance_id": {"S": "another-instance"},
+            }}
+            with self.assertRaisesRegex(RuntimeError, "no longer owned"):
+                run.end_requested()
 
     def test_checkout_uses_broker_token_without_putting_it_in_the_remote_url(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -731,34 +750,23 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
             run.repository_id = credentials.repository_id
             run.repository_full_name = credentials.repository_full_name
 
-            def complete_codex(command, **kwargs):
-                run.final_message.write_text("Implemented and pushed.\n", encoding="utf-8")
-                process = Mock()
-                process.stdout = io.BytesIO(
-                    b'{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}\n'
-                )
-                process.wait.return_value = 0
-                return process
+            def conversation(**kwargs):
+                self.assertEqual(kwargs["reprompt"], run.reprompt)
+                self.assertEqual(kwargs["state_file"], run.job_root / "codex-conversation.json")
+                kwargs["client_factory"]()
+                result = Mock()
+                result.run.side_effect = lambda: run.final_message.write_text("Implemented and pushed.\n")
+                return result
 
-            with patch.object(
-                runner_module.subprocess,
-                "Popen",
-                side_effect=complete_codex,
-            ) as popen:
+            with (
+                patch.object(runner_module, "AppServerClient") as client,
+                patch.object(runner_module, "SoftwareConversation", side_effect=conversation),
+            ):
                 run.run_codex("Implement the requested feature.")
 
-            command = popen.call_args.args[0]
-            environment = popen.call_args.kwargs["env"]
-            self.assertEqual(command[command.index("--cd") + 1], str(run.repository_root))
-            self.assertEqual(
-                command[command.index("--sandbox") + 1],
-                "danger-full-access",
-            )
-            self.assertEqual(
-                command[command.index("--ask-for-approval") + 1],
-                "never",
-            )
-            self.assertNotIn("--skip-git-repo-check", command)
+            environment = client.call_args.kwargs["env"]
+            self.assertEqual(client.call_args.kwargs["cwd"], run.repository_root)
+
             self.assertEqual(environment["SOFTWARE_BUILDER_REPOSITORY_ROOT"], str(run.repository_root))
             self.assertEqual(
                 environment["GITHUB_TOKEN_BROKER_FUNCTION_NAME"],

@@ -49,6 +49,7 @@ type LaunchJobRequest = {
   githubRepositoryId?: unknown;
   jobId?: unknown;
   originalTask?: unknown;
+  reprompt?: unknown;
   projectName?: unknown;
   databaseName?: unknown;
   typeOfJob?: unknown;
@@ -69,6 +70,7 @@ type JobItem = {
   orchestrator_instance_id?: unknown;
   launched_at?: unknown;
   finished_at?: unknown;
+  end_requested_at?: unknown;
 };
 
 const JOB_STATUSES: JobStatus[] = ["initializing", "running", "completed", "failed"];
@@ -137,6 +139,7 @@ async function parseLaunchRequest(request: Request): Promise<ParsedLaunchJobRequ
       githubRepositoryId: form.get("githubRepositoryId") ?? undefined,
       jobId: form.get("jobId"),
       originalTask: form.get("originalTask"),
+      reprompt: form.get("reprompt") ?? undefined,
       projectName: form.get("projectName") ?? undefined,
       typeOfJob: form.get("typeOfJob"),
       anchorFile: candidate && typeof candidate !== "string" ? candidate : null,
@@ -252,6 +255,7 @@ function toJob(item: Record<string, unknown> | undefined): Job | null {
       typeof record.orchestrator_instance_id === "string" ? record.orchestrator_instance_id : null,
     launchedAt: typeof record.launched_at === "string" ? record.launched_at : null,
     finishedAt: typeof record.finished_at === "string" ? record.finished_at : null,
+    endRequestedAt: typeof record.end_requested_at === "string" ? record.end_requested_at : null,
   };
 }
 
@@ -373,6 +377,13 @@ export async function POST(request: Request) {
     return errorResponse("typeOfJob is not supported.", 400);
   }
   const typeOfJob: JobType = requestedJobType;
+  if (input.reprompt != null && (
+    typeOfJob !== "software_builder" || typeof input.reprompt !== "string" ||
+    input.reprompt.length > MAX_TASK_LENGTH
+  )) {
+    return errorResponse(`reprompt must be a string of at most ${MAX_TASK_LENGTH} characters for a software-builder job.`, 400);
+  }
+  const reprompt = typeof input.reprompt === "string" ? input.reprompt.trim() : "";
   if (typeOfJob === "data_mining" && input.githubRepositoryId !== undefined) {
     return errorResponse(
       "githubRepositoryId is only valid for software-builder jobs.",
@@ -514,6 +525,7 @@ export async function POST(request: Request) {
                 pk: jobPk(jobId),
                 job_id: jobId,
                 original_task: originalTask,
+                ...(typeOfJob === "software_builder" ? { reprompt: reprompt || null } : {}),
                 expected_subagent_count: expectedSubagentCount,
                 database_name: databaseName,
                 type_of_job: typeOfJob,
@@ -729,6 +741,41 @@ export async function DELETE(request: Request) {
     const job = toJob(stored.Item);
     if (!job) {
       return errorResponse("That job does not exist.", 404);
+    }
+
+    if (job.typeOfJob === "software_builder") {
+      if (job.status === "completed" || job.status === "failed" || job.endRequestedAt) {
+        return json(job);
+      }
+      // Keep the lock and running status until the worker finishes publishing.
+      // Brokers require an active job to refresh credentials and deploy to Vercel.
+      const now = new Date().toISOString();
+      try {
+        const updated = await documents.send(new UpdateCommand({
+          TableName: config.jobsTable,
+          Key: jobKey(jobId),
+          UpdateExpression: "SET end_requested_at = if_not_exists(end_requested_at, :now), updated_at = :now",
+          ConditionExpression: "#status IN (:initializing, :running) AND type_of_job = :software",
+          ExpressionAttributeNames: { "#status": "status" },
+          ExpressionAttributeValues: {
+            ":now": now, ":initializing": "initializing", ":running": "running",
+            ":software": "software_builder",
+          },
+          ReturnValues: "ALL_NEW",
+        }));
+        return json(toJob(updated.Attributes), { status: 202 });
+      } catch (error) {
+        if (error instanceof Error && error.name === "ConditionalCheckFailedException") {
+          const latest = await documents.send(new GetCommand({
+            TableName: config.jobsTable, Key: jobKey(jobId), ConsistentRead: true,
+          }));
+          const current = toJob(latest.Item);
+          if (current && (current.status === "completed" || current.status === "failed" || current.endRequestedAt)) {
+            return json(current);
+          }
+        }
+        throw error;
+      }
     }
 
     if (job.orchestratorInstanceId) {

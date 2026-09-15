@@ -31,6 +31,7 @@ export type Job = {
   orchestratorInstanceId: string | null;
   launchedAt: string | null;
   finishedAt: string | null;
+  endRequestedAt: string | null;
 };
 
 export type PublishedWebsite = {
@@ -177,6 +178,7 @@ export async function requestJobLaunch(
   githubRepositoryId?: number,
   projectName?: string,
   databaseName?: string,
+  reprompt?: string,
 ): Promise<Job> {
   let request: RequestInit;
   if (anchorFile) {
@@ -197,6 +199,7 @@ export async function requestJobLaunch(
         githubRepositoryId,
         projectName,
         databaseName,
+        reprompt,
       }),
     };
   }

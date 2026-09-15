@@ -444,6 +444,7 @@ export default function SoftwareBuilderPage() {
         repository.id,
         project || undefined,
         database?.name,
+        reprompt.trim(),
       );
       setIdea("");
       setSubmitNotice(

@@ -130,22 +130,26 @@ class TelemetryRecorder:
         if isinstance(usage, dict) or now - self.last_publish_monotonic >= PUBLISH_INTERVAL_SECONDS:
             self.publish(strict=False)
 
-    @staticmethod
-    def _usage_from_event(event: dict[str, Any] | None) -> dict[str, Any] | None:
-        if not event:
+    def _usage_from_event(self, event: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not event or event.get("method") != "thread/tokenUsage/updated":
             return None
-        candidates: list[Any] = [event.get("usage")]
-        info = event.get("info")
-        if isinstance(info, dict):
-            candidates.extend(
-                [info.get("total_token_usage"), info.get("last_token_usage"), info.get("usage")]
-            )
-        token_count = event.get("token_count")
-        if isinstance(token_count, dict):
-            candidates.extend(
-                [token_count.get("total_token_usage"), token_count.get("usage"), token_count]
-            )
-        return next((value for value in candidates if isinstance(value, dict)), None)
+        params = event.get("params", {})
+        if params.get("threadId") != self.latest.get("codex_thread_id"):
+            return None
+        # App-server supplies cumulative thread totals. Replace the snapshot;
+        # adding each update would count the same tokens again on every turn.
+        total = params.get("tokenUsage", {}).get("total")
+        if not isinstance(total, dict):
+            return None
+        names = {
+            "input_tokens": "inputTokens",
+            "cached_input_tokens": "cachedInputTokens",
+            "cache_write_input_tokens": "cacheWriteInputTokens",
+            "output_tokens": "outputTokens",
+            "reasoning_output_tokens": "reasoningOutputTokens",
+            "total_tokens": "totalTokens",
+        }
+        return {field: total.get(name) for field, name in names.items()}
 
     def _merge_usage(self, usage: dict[str, Any]) -> None:
         normalized: dict[str, int | None] = {}
