@@ -670,7 +670,9 @@ EC2 termination. Software requests remain within their assigned global-memory
 folder under `_runtime/termination/request.json`. The bootstrap timeout and
 systemd shutdown hook remain in place. There is no periodic cleanup sweep.
 
-Agents choose their own artifact formats. The required `description.md` must be
+Agents must upload all gathered data as UTF-8 `.json` files in their assigned
+S3 folder, using a structure appropriate to the task. The required `description.md`
+lists these files and explains their structure. This document must be
 nonempty UTF-8, at most 1 MiB, and present in S3. After each Codex exit, the runner
 checks this object; an unsuccessful exit or invalid description triggers
 `codex exec resume` with the saved thread ID. All attempts share a 30-minute
@@ -681,9 +683,13 @@ characters are explicitly truncated in tool responses, with the full file in S3.
 The final integration prompt also bounds description excerpts across all agents.
 Store full project/agent object keys when indexing these artifacts in RDS.
 
-Without REPROMPT, the initial turn closes delegation and drains outstanding
-agents. Uncollected results trigger one final integration turn in the same thread.
-With REPROMPT, ordinary turns continue until End Job. End Job atomically blocks
+After each ordinary turn, the runner reads active subagent reservations. If any
+remain, the next turn receives their count, IDs, tasks, statuses and S3 output
+locations, without adding REPROMPT. This includes provisioning agents. When none
+remain, a configured REPROMPT starts the next ordinary turn. Without REPROMPT,
+the runner instead closes delegation and integrates any uncollected results in
+one final turn. Active-agent coordination turns still run without REPROMPT.
+All turns share the same persistent conversation. End Job atomically blocks
 new reservations, interrupts the current turn, drains existing agents, and then
 runs the final integration/publication turn. A failed parent cancels its children.
 The software monitor displays agent tasks, progress, telemetry and S3 output paths.

@@ -10,6 +10,19 @@ spec.loader.exec_module(client)
 
 
 class DrainTests(unittest.TestCase):
+    def test_active_context_includes_provisioning_and_excludes_terminal_agents(self):
+        rows = [
+            {"agent_id": "one", "active": True, "state": "PROVISIONING", "task": "Find trials", "output_uri": "s3://memory/project/one/"},
+            {"agent_id": "two", "active": True, "state": "RUNNING", "task": "Find companies"},
+            {"agent_id": "three", "active": False, "state": "TERMINATED", "task": "Finished task"},
+        ]
+        with patch.object(client, 'request', return_value={'agents': rows}) as request:
+            context = client.active_agents()
+        self.assertEqual([row['agent_id'] for row in context], ['one', 'two'])
+        self.assertEqual(context[0]['task'], 'Find trials')
+        self.assertEqual(context[0]['output_uri'], 's3://memory/project/one/')
+        request.assert_called_once_with('status')
+
     def test_provisioning_reservations_are_drained_and_failures_are_integrated(self):
         running = {'agent_id': 'one', 'active': True, 'state': 'PROVISIONING'}
         done = {**running, 'active': False, 'state': 'TERMINATED', 'result_status': 'failed', 'failure_reason': 'Deadline expired'}

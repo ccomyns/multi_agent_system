@@ -95,6 +95,66 @@ class SoftwareConversationTests(unittest.TestCase):
                 resumed = self.make_loop(root, Mock(side_effect=AssertionError("must not restart")), lambda: False, reprompt)
                 resumed.run()
 
+    def test_active_agents_replace_reprompt_until_no_agents_remain(self):
+        client = FakeClient()
+        agent = {"agent_id": "sw-one", "task": "Gather trial data", "state": "PROVISIONING", "output_uri": "s3://memory/project/sw-one/"}
+        with tempfile.TemporaryDirectory() as temp:
+            loop = self.make_loop(Path(temp), lambda: client, lambda: client.turns >= 3)
+            loop.get_active_agents = Mock(side_effect=[[agent], [], []])
+            loop.run()
+            prompts = [p["input"][0]["text"] for m, p in client.calls if m == "turn/start"]
+            self.assertEqual(len(prompts), 4)
+            self.assertIn(loop.reprompt, prompts[0])
+            self.assertNotIn(loop.reprompt, prompts[1])
+            self.assertNotIn(module.CONTINUE_PROMPT, prompts[1])
+            self.assertIn('"active_count": 1', prompts[1])
+            self.assertIn("Gather trial data", prompts[1])
+            self.assertIn("PROVISIONING", prompts[1])
+            self.assertIn(loop.reprompt, prompts[2])
+            self.assertNotIn("Active subagents:", prompts[2])
+            self.assertIn("The user clicked End Job", prompts[3])
+            self.assertEqual(sum(m == "thread/start" for m, _ in client.calls), 1)
+
+    def test_active_agents_continue_without_reprompt_then_finish(self):
+        client = FakeClient()
+        with tempfile.TemporaryDirectory() as temp:
+            loop = self.make_loop(Path(temp), lambda: client, lambda: False, "")
+            loop.get_active_agents = Mock(side_effect=[[{"agent_id": "sw-one", "state": "RUNNING"}], []])
+            loop.drain_agents = Mock(return_value="Collected findings")
+            loop.run()
+            prompts = [p["input"][0]["text"] for m, p in client.calls if m == "turn/start"]
+            self.assertEqual(len(prompts), 3)
+            self.assertIn("Active subagents:", prompts[1])
+            self.assertIn("Collected findings", prompts[2])
+            loop.drain_agents.assert_called_once()
+
+    def test_reconnection_reads_active_agents_before_choosing_prompt(self):
+        first, second = FakeClient(crash=True), FakeClient()
+        clients = iter([first, second])
+        with tempfile.TemporaryDirectory() as temp:
+            loop = self.make_loop(Path(temp), lambda: next(clients), lambda: second.turns >= 1)
+            loop.get_active_agents = Mock(return_value=[{"agent_id": "sw-live", "state": "RUNNING"}])
+            loop.run()
+            prompt = next(p["input"][0]["text"] for m, p in second.calls if m == "turn/start")
+            self.assertIn("sw-live", prompt)
+            self.assertNotIn(loop.reprompt, prompt)
+            self.assertTrue(any(m == "thread/resume" for m, _ in second.calls))
+
+    def test_inventory_failure_never_dispatches_reprompt_as_if_no_agents(self):
+        client = FakeClient()
+        failed = [False]
+        def unavailable():
+            failed[0] = True
+            raise RuntimeError("status service unavailable")
+        with tempfile.TemporaryDirectory() as temp:
+            loop = self.make_loop(Path(temp), lambda: client, lambda: failed[0])
+            loop.get_active_agents = unavailable
+            loop.run()
+            prompts = [p["input"][0]["text"] for m, p in client.calls if m == "turn/start"]
+            self.assertEqual(len(prompts), 2)
+            self.assertIn("The user clicked End Job", prompts[1])
+            self.assertNotIn(loop.reprompt, prompts[1])
+
     def test_single_turn_drains_then_integrates_results_in_same_thread(self):
         client = FakeClient()
         with tempfile.TemporaryDirectory() as temp:

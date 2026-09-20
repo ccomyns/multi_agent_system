@@ -15,6 +15,14 @@ def request(action, **values):
     return payload['body']
 
 
+def active_agents():
+    """Read active reservations, including provisioning, without collecting results."""
+    return [
+        {key: row.get(key) for key in ('agent_id', 'task', 'state', 'output_uri')}
+        for row in request('status')['agents'] if row['active'] is True
+    ]
+
+
 def drain():
     """Close atomically against launches, wait for all reservations, collect outcomes."""
     rows = request('close')['agents']

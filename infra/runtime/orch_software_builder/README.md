@@ -10,15 +10,21 @@ Vercel MCP configuration remain in use. Research runtimes still use `codex exec`
 - `/software` submits `reprompt` alongside `originalTask`; the launch API validates
   it (up to 4,000 characters) and stores it on the job record. Missing, null, empty,
   or whitespace-only REPROMPT is stored as null and selects single-turn mode.
-- In single-turn mode, the runner closes delegation when the initial turn ends
-  and waits for all reserved subagents. Uncollected outcomes trigger one final
-  integration turn on the same thread. With no uncollected outcomes, the initial
-  response is final. Ordinary failed turns fail the job; final integration retries
-  are bounded to three attempts.
+- Without REPROMPT, turns continue with active-agent context while any agents
+  remain active. Once none are active, the runner closes delegation. Uncollected
+  outcomes trigger one final integration turn on the same thread. With no
+  uncollected outcomes, the last ordinary turn's response is final. Initial turn
+  failures fail the job; active-agent coordination can retry, and final integration
+  retries are bounded to three attempts.
 - A non-empty REPROMPT selects continuous mode. After every successful ordinary
-  turn, the Python bootstrap runner starts another
-  turn on the same thread with continuation instructions, the original goal, and
-  the user's REPROMPT.
+  turn, the runner checks active subagent reservations. If any remain, it starts
+  another turn with their count, IDs, tasks, statuses and S3 output locations,
+  without adding REPROMPT. If none remain, it supplies continuation instructions,
+  the original goal and REPROMPT. Provisioning reservations count as active;
+  completed/inactive agents are omitted from the active inventory.
+- Reconnecting to a saved thread refreshes this inventory before choosing the
+  next ordinary prompt. A failed status request is not treated as zero active
+  agents. End Job always takes priority over both normal continuation modes.
 - In continuous mode, app-server stays alive between turns. Failed turns and process exits
   restart the connection and resume the exact saved thread, with retry delays up
   to 60 seconds. The runner never substitutes a new conversation if resume fails.
@@ -100,6 +106,7 @@ timeout_seconds)`. The manager reads the immutable project assignment and caps
 active reservations at 12. Each agent gets a separate EC2 role whose S3 access
 is confined to `<project>/<agent>/` in the actual global-memory bucket. Agents
 have no application GitHub, database, or publishing credentials. They choose their
-output formats and must upload `description.md`; the separate software worker
+JSON structures for their gathered data, upload it as `.json` files to their
+assigned S3 folder, and document those files in `description.md`; the separate software worker
 runtime resumes Codex until this file is valid or the total 30-minute deadline
 expires. See the root README for storage, cleanup and deployment details.

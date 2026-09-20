@@ -756,6 +756,7 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
 
             def conversation(**kwargs):
                 self.assertEqual(kwargs["reprompt"], run.reprompt)
+                self.assertIs(kwargs["get_active_agents"], runner_module.software_agents.active_agents)
                 self.assertEqual(kwargs["state_file"], run.job_root / "codex-conversation.json")
                 kwargs["client_factory"]()
                 result = Mock()

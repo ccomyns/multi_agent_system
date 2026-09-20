@@ -586,10 +586,11 @@ default_tools_approval_mode = "approve"
             "tree clean. "
             + (
                 "This job runs continuously in one persistent conversation. "
-                "After each normal turn, the runtime will ask you to continue with the user's REPROMPT. "
+                "After each normal turn, the runtime supplies active subagent context if any remain, or the user's REPROMPT when none are active. "
                 if self.reprompt else
-                "This job runs for a single turn. Complete the task and provide your final response "
-                "in this turn; the runtime will not automatically reprompt you. "
+                "No REPROMPT is configured. Complete the task in this turn if possible. "
+                "If subagents remain active, the runtime continues with their context until "
+                "none are active, then closes delegation and integrates any uncollected results. "
             )
             + "Choose useful next steps without waiting for clarification when "
             "reasonable assumptions allow progress. When the user ends the job, stop "
@@ -615,6 +616,7 @@ default_tools_approval_mode = "approve"
                 cwd=self.repository_root, should_end=self.end_requested,
                 checkpoint=self.telemetry.record,
                 drain_agents=software_agents.drain,
+                get_active_agents=software_agents.active_agents,
                 client_factory=lambda: AppServerClient(
                     cwd=self.repository_root, env=self.codex_environment(),
                     log=codex_log, on_event=self.telemetry.append_raw_event,

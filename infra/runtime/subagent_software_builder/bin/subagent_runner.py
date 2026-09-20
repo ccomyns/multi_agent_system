@@ -127,11 +127,15 @@ def main():
 You have Playwright and Chromium. You have no application GitHub repository, RDS,
 or Vercel access. Your only writable S3 location is s3://{bucket}/{prefix}.
 Read access is limited to this same folder (plus runtime/auth bootstrap resources).
-Upload useful files there in any format appropriate to the task. Keep full S3 keys,
-including the project and agent prefixes, in any metadata you produce.
+Upload all data you gather as valid UTF-8 JSON files with .json extensions directly
+to s3://{bucket}/{prefix}. Choose a JSON structure appropriate to the task and
+include source references where available. Do not leave gathered data only on the
+VM or in your final response. Keep full S3 keys, including the project and agent
+prefixes, in any metadata you produce.
 Before finishing, upload a nonempty UTF-8 description.md (at most 1 MiB) to
 s3://{bucket}/{prefix}description.md explaining what you did, findings, sources,
-output files and limitations. Do not put deliverables in the reserved _runtime/ folder.
+output files and limitations. List the uploaded JSON files and explain their
+structure in description.md. Do not put deliverables in the reserved _runtime/ folder.
 Your total deadline, including corrective retries, is 30 minutes from allocation.
 '''
         session_file = (WORK_DIR / ".codex-session")
@@ -154,7 +158,7 @@ Your total deadline, including corrective retries, is 30 minutes from allocation
                 publish_terminal(s3, bucket, prefix, 'completed', attempts=attempt, completed_at=utc_now())
                 return 0
             telemetry.record('description_retry', f'Attempt {attempt}: exit {code}; completion requires exit 0 and a valid S3 description.md')
-            prompt = f'Continue the assigned task using the existing context and files. Last exit code: {code}. Ensure s3://{bucket}/{prefix}description.md exists, is nonempty UTF-8 and at most 1 MiB, and finish successfully. Original task:\n{task}'
+            prompt = f'Continue the assigned task using the existing context and files. Last exit code: {code}. Upload all gathered data as valid UTF-8 .json files to s3://{bucket}/{prefix}. Ensure s3://{bucket}/{prefix}description.md exists, is nonempty UTF-8 and at most 1 MiB, lists the uploaded JSON files and explains their structure, and finish successfully. Original task:\n{task}'
             time.sleep(min(5, max(0, deadline - time.time())))
         raise TimeoutError('30-minute subagent deadline reached')
     except Exception as error:

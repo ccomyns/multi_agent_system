@@ -185,6 +185,8 @@ def dispatch(event):
         results = []
         for row in rows:
             result = {k: row.get(k) for k in ('agent_id', 'state', 'active', 'collected', 'result_status', 'failure_reason')}
+            if row.get('active'):
+                result['task'] = row['task']
             result['output_uri'] = f"s3://{row['output_bucket']}/{row['output_prefix']}"
             if action == 'software_collect' and not row.get('active') and row['agent_id'] in event.get('agent_ids', []):
                 result['description'] = description(row)
