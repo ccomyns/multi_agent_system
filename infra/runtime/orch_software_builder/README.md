@@ -101,6 +101,11 @@ Protocol reference: https://learn.chatgpt.com/docs/app-server
 
 ## Research agents
 
+Built-in Codex delegation is disabled with `features.multi_agent = false` in
+the generated configuration and an app-server command-line override. The
+orchestrator is instructed to delegate exclusively through the `software_agents`
+MCP server, including when coordinating agents between turns.
+
 The software MCP exposes `spawn_agent(task)` and `wait_on_any(agent_ids,
 timeout_seconds)`. The manager reads the immutable project assignment and caps
 active reservations at 12. Each agent gets a separate EC2 role whose S3 access

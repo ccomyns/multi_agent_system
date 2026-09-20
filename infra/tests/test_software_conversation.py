@@ -360,7 +360,7 @@ for line in sys.stdin:
 '''
         spawn = subprocess.Popen
         def launch(command, **kwargs):
-            self.assertEqual(command, ["codex", "app-server"])
+            self.assertEqual(command, ["codex", "app-server", "-c", "features.multi_agent=false"])
             return spawn([sys.executable, "-u", "-c", script], **kwargs)
         with tempfile.TemporaryDirectory() as temp, open(os.devnull, "wb") as log:
             events = []
