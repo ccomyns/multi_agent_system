@@ -53,6 +53,7 @@ function harness(status = "running", type = "software_builder", completeDuringEn
         }
         case "RunInstancesCommand": return { Instances: [{ InstanceId: "i-test" }] };
         case "TerminateInstancesCommand": return {};
+        case "ListObjectsV2Command": return { Contents: [{ Key: "research/" }] };
         default: throw new Error(`Unexpected ${command.name}`);
       }
     }
@@ -69,7 +70,7 @@ function harness(status = "running", type = "software_builder", completeDuringEn
       getOrganizationRepository: async (id) => ({ id, fullName: "org/repo" }),
       GitHubApiError: class extends Error {}, GitHubConfigurationError: class extends Error {},
     },
-    "@/lib/project-uploads": {}, "@/lib/databases": {},
+    "@/lib/project-uploads": { projectNameError: () => null }, "@/lib/databases": {},
   };
   function load(relative) {
     const source = ts.transpileModule(readFileSync(path.join(__dirname, "..", relative), "utf8"), {
@@ -97,6 +98,7 @@ function endRequest() { return new Request("http://localhost/api/jobs?jobId=job_
 function launchRequest(reprompt, typeOfJob = "software_builder") {
   return new Request("http://localhost/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jobId: "job_abc1_1234abcd", originalTask: "Build a dashboard", typeOfJob,
+      projectName: typeOfJob === "software_builder" ? "research" : undefined,
       githubRepositoryId: typeOfJob === "software_builder" ? 123 : undefined, reprompt }) });
 }
 
@@ -166,4 +168,14 @@ test("missing, null, empty, and whitespace REPROMPT are stored as null for singl
     assert.equal((await route.POST(launchRequest(reprompt))).status, 201);
     assert.equal(item().reprompt, null);
   }
+});
+
+ test("software launch requires an S3 project before taking a lock or launching a VM", async () => {
+  const { route, calls } = harness();
+  const request = launchRequest(null);
+  const body = await request.json();
+  delete body.projectName;
+  const response = await route.POST(new Request(request.url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
+  assert.equal(response.status, 400);
+  assert.ok(!calls.some((call) => ["TransactWriteCommand", "RunInstancesCommand"].includes(call.name)));
 });

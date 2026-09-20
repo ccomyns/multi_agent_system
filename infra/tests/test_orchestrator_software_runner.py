@@ -414,6 +414,7 @@ class SoftwareGitHubCredentialTests(unittest.TestCase):
         environment = {
             "AWS_REGION": "us-east-1",
             "GITHUB_TOKEN_BROKER_FUNCTION_NAME": "github-token-broker",
+            "FUNCTION_NAME": "subagent-manager",
             "JOB_ID": "job_abc1_1234abcd",
             "ORCHESTRATOR_INSTANCE_ID": "i-1234567890abcdef0",
         }
@@ -550,6 +551,7 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
         run.selected_database_name = ""
         run.orchestrator_model = "gpt-5.6-terra"
         run.token_broker_function = "github-token-broker"
+        run.subagent_manager_function = "subagent-manager"
         run.project_broker_function = "project-credentials-broker"
         run.vercel_publisher_function = "vercel-publisher"
         run.git_author_name = "Cody C"
@@ -562,6 +564,8 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
         run.result_manifest = run.result_dir / "software_result.json"
         run.completed_file = run.result_dir / "completed.md"
         run.failure_file = run.result_dir / "failure.md"
+        run.github_token_file = run.job_root / "github-token.json"
+        run.github_token_refresher = None
         run.credential_helper = root / "github_credential_helper.py"
         run.credential_helper.write_text("# helper\n", encoding="utf-8")
         run.project_credential_process = root / "software_project_credentials.py"
@@ -742,7 +746,7 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
                 )
             )
 
-    def test_codex_starts_at_repository_root_without_subagent_configuration(self) -> None:
+    def test_codex_starts_at_repository_root_with_scoped_subagent_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run = self.make_run(Path(temporary))
             (run.repository_root / ".git").mkdir(parents=True)
@@ -786,12 +790,13 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
                 str(run.database_url_file),
             )
             self.assertNotIn("AWS_PROFILE", environment)
-            self.assertNotIn("FUNCTION_NAME", environment)
+            self.assertEqual(environment["FUNCTION_NAME"], "subagent-manager")
             self.assertNotIn("SPAWN_AGENT_MCP_COMMAND", environment)
 
             config = (run.codex_home / "config.toml").read_text(encoding="utf-8")
             self.assertIn("current working directory is exactly", config)
-            self.assertIn("No subagent tools are configured", config)
+            self.assertIn("[mcp_servers.software_agents]", config)
+            self.assertIn("up to 12 concurrent subagents", config)
             self.assertIn("git add and commit every intended change", config)
             self.assertIn("push the current branch to origin", config)
             self.assertIn("leave the working tree clean", config)
@@ -835,7 +840,7 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
                 function_name=run.project_broker_function,
                 job_id=run.job_id,
                 orchestrator_instance_id=run.orchestrator_instance_id,
-                allow_unassigned=True,
+                allow_unassigned=False,
                 lambda_client=run.lambda_client,
             )
             environment = run.codex_environment()

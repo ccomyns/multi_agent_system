@@ -95,6 +95,50 @@ class SoftwareConversationTests(unittest.TestCase):
                 resumed = self.make_loop(root, Mock(side_effect=AssertionError("must not restart")), lambda: False, reprompt)
                 resumed.run()
 
+    def test_single_turn_drains_then_integrates_results_in_same_thread(self):
+        client = FakeClient()
+        with tempfile.TemporaryDirectory() as temp:
+            loop = self.make_loop(Path(temp), lambda: client, lambda: False, "")
+            def drain():
+                self.assertEqual(client.turns, 1)
+                return "Research findings at s3://memory/project/agent/description.md"
+            loop.drain_agents = Mock(side_effect=drain)
+            loop.run()
+            self.assertEqual(client.turns, 2)
+            prompts = [p["input"][0]["text"] for m, p in client.calls if m == "turn/start"]
+            self.assertIn("Research findings", prompts[1])
+            self.assertIn("Do not launch any more subagents", prompts[1])
+            self.assertNotIn("The user clicked End Job", prompts[1])
+            loop.drain_agents.assert_called_once()
+            self.assertTrue(loop.state["wrapped_up"])
+
+    def test_end_job_drains_before_dispatching_wrap_up(self):
+        client = FakeClient()
+        with tempfile.TemporaryDirectory() as temp:
+            loop = self.make_loop(Path(temp), lambda: client, lambda: True)
+            def drain():
+                self.assertEqual(client.turns, 0)
+                return "Agent failed: deadline expired"
+            loop.drain_agents = Mock(side_effect=drain)
+            loop.run()
+            prompt = next(p["input"][0]["text"] for m, p in client.calls if m == "turn/start")
+            self.assertIn("Agent failed: deadline expired", prompt)
+            self.assertIn("publish_site", prompt)
+            self.assertEqual(client.turns, 1)
+
+    def test_end_during_single_turn_drain_still_dispatches_wrap_up(self):
+        client = FakeClient()
+        ending = [False]
+        with tempfile.TemporaryDirectory() as temp:
+            loop = self.make_loop(Path(temp), lambda: client, lambda: ending[0], "")
+            def drain():
+                ending[0] = True
+                return ""
+            loop.drain_agents = drain
+            loop.run()
+            self.assertEqual(client.turns, 2)
+            self.assertEqual(loop.final_file.read_text(), "Published and verified.\n")
+
     def test_single_turn_failure_does_not_dispatch_another_turn(self):
         client = FakeClient(crash=True)
         with tempfile.TemporaryDirectory() as temp:

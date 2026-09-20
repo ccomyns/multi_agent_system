@@ -25,7 +25,7 @@ import type { Job, JobStatus } from "@/lib/jobs";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const AGENT_ID_PATTERN = /^agent-[0-9a-f]{24}$/;
+const AGENT_ID_PATTERN = /^(?:agent-[0-9a-f]{24}|sw-[0-9a-f]{32})$/;
 const TERMINAL_EC2_STATES = new Set(["shutting-down", "stopped", "terminated"]);
 const JOB_STATUSES: JobStatus[] = ["initializing", "running", "completed", "failed"];
 
@@ -337,9 +337,7 @@ export async function GET(
       jobIsFinished
         ? Promise.resolve(null)
         : describeOrchestrator(ec2, job.orchestratorInstanceId),
-      job.typeOfJob === "data_mining"
-        ? queryAgentItems(documents, config.stateTable, job.orchestratorInstanceId)
-        : Promise.resolve([]),
+      queryAgentItems(documents, config.stateTable, job.orchestratorInstanceId),
     ]);
     const subagents = buildSubagents(agentItems);
     const progress = progressFor(
@@ -373,7 +371,7 @@ export async function GET(
       // A job can finish a few seconds before EventBridge reconciles the final
       // subagent termination. Keep polling until those compact rows settle.
       isTerminal: progress.isTerminal && !subagents.some(
-        (agent) => ["queued", "provisioning", "running"].includes(agent.status),
+        (agent) => agent.active,
       ),
       subagents,
     };

@@ -15,7 +15,7 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-const AGENT_ID_PATTERN = /^agent-[0-9a-f]{24}$/;
+const AGENT_ID_PATTERN = /^(?:agent-[0-9a-f]{24}|sw-[0-9a-f]{32})$/;
 
 function response(data: unknown, init?: ResponseInit) {
   const result = NextResponse.json(data, init);
@@ -46,7 +46,7 @@ export async function GET(
   }
   const jobsTable = process.env.JOBS_TABLE_NAME;
   const stateTable = process.env.STATE_TABLE_NAME;
-  const bucket = process.env.AGENT_WORKSPACE_BUCKET_NAME;
+  let bucket = process.env.AGENT_WORKSPACE_BUCKET_NAME;
   if (!jobsTable || !stateTable || !bucket) {
     return response({ error: "The admin server telemetry configuration is incomplete." }, { status: 503 });
   }
@@ -67,25 +67,30 @@ export async function GET(
       return response({ error: "That job does not exist." }, { status: 404 });
     }
     const jobType = isJobType(job.type_of_job) ? job.type_of_job : DEFAULT_JOB_TYPE;
-    if (jobType !== "data_mining") {
-      return response({ error: "That job type does not use agent telemetry." }, { status: 409 });
-    }
     if (typeof job.orchestrator_instance_id !== "string") {
       return response({ error: "That job has no orchestrator instance." }, { status: 404 });
     }
 
-    const prefix = `jobs/${jobId}/agents/${agentId}`;
-    const [agentResult, inputText, completedStatus, failedStatus, telemetry] = await Promise.all([
-      documents.send(
-        new GetCommand({
-          TableName: stateTable,
-          Key: {
-            pk: `ORCHESTRATOR#${job.orchestrator_instance_id}`,
-            sk: `AGENT#${agentId}`,
-          },
-          ConsistentRead: true,
-        }),
-      ),
+    const agentResult = await documents.send(new GetCommand({
+      TableName: stateTable,
+      Key: { pk: `ORCHESTRATOR#${job.orchestrator_instance_id}`, sk: `AGENT#${agentId}` },
+      ConsistentRead: true,
+    }));
+    const agent = agentResult.Item;
+    if (!agent || agent.job_id !== jobId || agent.agent_id !== agentId) {
+      return response({ error: "That subagent does not exist for this job." }, { status: 404 });
+    }
+    let prefix = `jobs/${jobId}/agents/${agentId}`;
+    let outputUri: string | undefined;
+    if (jobType === "software_builder") {
+      if (!process.env.GLOBAL_MEMORY_BUCKET_NAME || agent.output_bucket !== process.env.GLOBAL_MEMORY_BUCKET_NAME || typeof agent.output_prefix !== "string") {
+        return response({ error: "Invalid software agent storage assignment." }, { status: 503 });
+      }
+      bucket = process.env.GLOBAL_MEMORY_BUCKET_NAME;
+      prefix = `${agent.output_prefix}_runtime`;
+      outputUri = `s3://${bucket}/${agent.output_prefix}`;
+    }
+    const [inputText, completedStatus, failedStatus, telemetry] = await Promise.all([
       readOptionalS3Text(s3, bucket, `${prefix}/input.json`),
       readOptionalS3Text(s3, bucket, `${prefix}/status/completed.json`),
       readOptionalS3Text(s3, bucket, `${prefix}/status/failed.json`),
@@ -100,7 +105,6 @@ export async function GET(
     } catch {
       input = null;
     }
-    const agent = agentResult.Item;
     if (!agent && !input) {
       return response({ error: "That subagent does not exist for this job." }, { status: 404 });
     }
@@ -111,9 +115,10 @@ export async function GET(
         ? "completed"
         : state.toLowerCase();
     const terminal = Boolean(completedStatus || failedStatus) ||
-      ["TERMINATED", "LAUNCH_FAILED", "LAUNCH_OUTCOME_UNKNOWN"].includes(state);
+      ["TERMINATED", "LAUNCH_FAILED"].includes(state);
     const payload: AgentTelemetryResponse = {
       actorType: "subagent",
+      outputUri,
       agentId,
       jobType,
       publishedWebsite: null,

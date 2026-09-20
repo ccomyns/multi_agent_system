@@ -119,7 +119,7 @@ one job record per run (`pk = JOB#<job_id>`) and a single lock item
 record's `pk`. The browser mints the `job_id` and posts it to the admin server,
 which issues one transaction containing conditional lock and job writes. A
 software-builder transaction also writes its immutable trusted repository and
-optional global-memory project assignment in that transaction. The lock succeeds only if no job is active,
+required global-memory project assignment in that transaction. The lock succeeds only if no job is active,
 and the job write succeeds only if that `job_id` has never been used. Only when
 the transaction commits does the admin server call `ec2:RunInstances`; the
 returned instance ID is stored as
@@ -311,13 +311,17 @@ record, verifies the active job and EC2 assignment, and asks GitHub for an
 installation token limited to that repository and `contents:write`. GitHub
 installation tokens expire after one hour.
 
-The software-builder runner uses the first token only to clone the assigned
-repository. It then installs a repository-local Git credential helper that asks
-the broker for a fresh token when Git needs one, allowing a long-running job to
-push after the first token expires without storing the token in the remote URL,
-repository, environment file, or Codex configuration. Before the runner marks a
-job complete, it requires a clean working tree and verifies that the current
-commit exists on the matching branch at `origin`.
+The software-builder runner uses the first token to clone the assigned
+repository, then refreshes its GitHub write token in the background five minutes
+before the broker-reported expiry (normally about every 55 minutes). The token
+is stored atomically in a mode-0600 file outside the repository, scoped to the
+job and orchestrator, and removed when the runner exits. Git's repository-local
+credential helper reads this cache and requests a fresh write token directly
+when the cache is missing or near expiry. Failed scheduled refreshes retry every
+60 seconds without stopping Codex. Git authentication rejection invalidates the
+cached credential. Tokens are never placed in the remote URL or Codex config.
+Before marking a job complete, the runner requires a clean working tree and
+verifies that the current commit exists on the matching branch at `origin`.
 
 At EC2 startup, Terraform writes `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL` into
 the software-builder-only systemd environment file. The runner explicitly
@@ -544,7 +548,8 @@ Applying this configuration builds three independently versioned base AMIs:
   dependencies, and a launch-time runtime downloader.
 
 Terraform packages the data-mining orchestrator, software-builder orchestrator,
-and data-mining subagent sources as three isolated, content-addressed S3 ZIPs.
+data-mining subagent, and software-research subagent sources as four isolated,
+content-addressed S3 ZIPs. Software research agents reuse the existing subagent AMI.
 Each instance receives only its own artifact key and SHA-256 and verifies it
 before execution. Runtime-only edits therefore update the S3 object and launch
 configuration without rebuilding any AMI.
@@ -642,3 +647,43 @@ configuration on their next publish; their application code must use OIDC.
 
 References: https://vercel.com/docs/oidc/aws and
 https://vercel.com/docs/rest-api/projects/update-an-existing-project.
+
+### Software-builder research subagents
+
+Every new software job requires an S3 project. The orchestrator can call
+`spawn_agent(task)` and `wait_on_any(agent_ids, timeout_seconds)` to run up to
+12 concurrent research agents. Identical task text is idempotent within a job.
+Provisioning reservations count toward the limit. Only the orchestrator receives
+the application repository, database credentials, and publishing tools.
+
+Each research agent receives a dedicated EC2 IAM role and instance profile. Its
+object reads and writes are limited to the actual global-memory bucket at
+`<project_name>/<subagent_id>/`, including when it uses IMDS credentials directly.
+The only bootstrap read exceptions are its exact runtime ZIP and the Codex auth
+parameter. Each role has a managed permissions boundary; the per-agent inline
+policy supplies the literal folder restriction. The manager removes roles and
+profiles after confirmed VM termination. A minute-based reconciler also handles
+missed termination events, expired reservations and failed parent jobs.
+
+Agents choose their own artifact formats. The required `description.md` must be
+nonempty UTF-8, at most 1 MiB, and present in S3. After each Codex exit, the runner
+checks this object; an unsuccessful exit or invalid description triggers
+`codex exec resume` with the saved thread ID. All attempts share a 30-minute
+allocation deadline. Runtime input, status, logs and telemetry live below the
+same agent folder in `_runtime/`. Keep that directory reserved for the runtime.
+Tool responses include the output URI and description; descriptions over 16,000
+characters are explicitly truncated in tool responses, with the full file in S3.
+The final integration prompt also bounds description excerpts across all agents.
+Store full project/agent object keys when indexing these artifacts in RDS.
+
+Without REPROMPT, the initial turn closes delegation and drains outstanding
+agents. Uncollected results trigger one final integration turn in the same thread.
+With REPROMPT, ordinary turns continue until End Job. End Job atomically blocks
+new reservations, interrupts the current turn, drains existing agents, and then
+runs the final integration/publication turn. A failed parent cancels its children.
+The software monitor displays agent tasks, progress, telemetry and S3 output paths.
+
+Apply the Terraform changes and redeploy the admin app before testing new jobs.
+No AMI rebuild or saved-job migration is required. Live validation should include
+an own-folder upload, denied sibling-folder access using the VM's IMDS credentials,
+a missing-description retry, and End Job while agents are still provisioning.

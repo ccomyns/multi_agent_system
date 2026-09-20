@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from typing import TextIO
 from urllib.parse import unquote
 
+from github_token_refresh import read_credentials
 from software_github_credentials import request_repository_credentials
 from software_project_credentials import base_role_environment
 
@@ -47,9 +49,9 @@ def main(
     source = source or sys.stdin
     destination = destination or sys.stdout
     operation = arguments[1] if len(arguments) > 1 else ""
-    if operation in {"store", "erase"}:
+    if operation == "store":
         return 0
-    if operation != "get":
+    if operation not in {"get", "erase"}:
         return 1
 
     request = read_request(source)
@@ -60,13 +62,22 @@ def main(
         return 1
 
     try:
-        with base_role_environment():
-            credentials = request_repository_credentials(
-                region=required_env("AWS_REGION"),
-                function_name=required_env("GITHUB_TOKEN_BROKER_FUNCTION_NAME"),
-                job_id=required_env("JOB_ID"),
-                orchestrator_instance_id=required_env("ORCHESTRATOR_INSTANCE_ID"),
-            )
+        cache = os.environ.get("SOFTWARE_BUILDER_GITHUB_CREDENTIAL_FILE")
+        credentials = read_credentials(
+            Path(cache), required_env("JOB_ID"), required_env("ORCHESTRATOR_INSTANCE_ID"),
+        ) if cache else None
+        if operation == "erase":
+            if credentials and requested_repository.casefold() == credentials.repository_full_name.casefold():
+                Path(cache).unlink(missing_ok=True)
+            return 0
+        if credentials is None:
+            with base_role_environment():
+                credentials = request_repository_credentials(
+                    region=required_env("AWS_REGION"),
+                    function_name=required_env("GITHUB_TOKEN_BROKER_FUNCTION_NAME"),
+                    job_id=required_env("JOB_ID"),
+                    orchestrator_instance_id=required_env("ORCHESTRATOR_INSTANCE_ID"),
+                )
         if requested_repository.casefold() != credentials.repository_full_name.casefold():
             return 1
         destination.write("username=x-access-token\n")

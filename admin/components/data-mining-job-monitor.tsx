@@ -250,7 +250,6 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
         </div>
       </section>
 
-      {jobType === "data_mining" ? (
       <section className="data-mining-panel subagent-panel" aria-labelledby="subagent-panel-label">
         <div className="data-mining-panel-label" id="subagent-panel-label">
           SUBAGENT PANEL
@@ -308,7 +307,6 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
           )}
         </div>
       </section>
-      ) : null}
     </div>
   );
 }

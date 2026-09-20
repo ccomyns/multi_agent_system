@@ -666,7 +666,8 @@ resource "aws_iam_role_policy" "software_builder_orchestrator" {
         Resource = [
           aws_lambda_function.github_token_broker.arn,
           aws_lambda_function.project_credentials_broker.arn,
-          aws_lambda_function.vercel_publisher.arn
+          aws_lambda_function.vercel_publisher.arn,
+          aws_lambda_function.subagent_manager.arn
         ]
       },
       {

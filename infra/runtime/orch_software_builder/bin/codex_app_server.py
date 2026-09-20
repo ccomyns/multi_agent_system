@@ -135,7 +135,8 @@ class SoftwareConversation:
 
     def __init__(self, *, state_file: Path, final_file: Path, task: str, reprompt: str | None,
                  model: str, cwd: Path, should_end: Callable[[], bool],
-                 checkpoint: Callable[..., Any], client_factory: Callable[[], AppServerClient]):
+                 checkpoint: Callable[..., Any], client_factory: Callable[[], AppServerClient],
+                 drain_agents: Callable[[], str] = lambda: ""):
         self.state_file = state_file
         self.final_file = final_file
         self.task = task
@@ -145,6 +146,7 @@ class SoftwareConversation:
         self.should_end = should_end
         self.checkpoint = checkpoint
         self.client_factory = client_factory
+        self.drain_agents = drain_agents
         self.state = json.loads(state_file.read_text()) if state_file.exists() else {
             "thread_id": None, "ending": False, "wrapped_up": False,
         }
@@ -208,13 +210,20 @@ class SoftwareConversation:
                                 codex_thread_id=self.state["thread_id"])
                 first = thread_id is None
                 while not self.state["wrapped_up"]:
-                    wrapping = self.ending(force=True)
+                    wrapping = self.ending(force=True) or self.state.get("integrating", False)
                     prompt = WRAP_UP_PROMPT if wrapping else (
                         self.task if first else CONTINUE_PROMPT + "\n\nOriginal task:\n" + self.task
                     )
                     if not wrapping and self.reprompt:
                         prompt += "\n\nUser REPROMPT (overarching goal):\n" + self.reprompt
                     if wrapping:
+                        if "agent_results" not in self.state:
+                            self.checkpoint("subagents_draining", "Waiting for subagents before final integration")
+                            self.state["agent_results"] = self.drain_agents()
+                            self.save()
+                        if not self.state["ending"]:
+                            prompt = WRAP_UP_PROMPT.replace("The user clicked End Job.", "The initial turn finished and subagent results are ready.")
+                        prompt += self.state["agent_results"]
                         prompt = "Original task:\n" + self.task + "\n\n" + prompt
                     first = False
                     result = client.request("turn/start", {
@@ -255,6 +264,13 @@ class SoftwareConversation:
                             break
                         if status != "completed":
                             raise AppServerError(f"Codex turn ended with status {status}: {params['turn'].get('error')}")
+                        if not wrapping and not self.reprompt:
+                            # Persist results before dispatching the final integration turn.
+                            results = self.drain_agents()
+                            if results or self.ending(force=True):
+                                self.state.update(integrating=True, agent_results=results)
+                                self.save()
+                                break
                         if wrapping or not self.reprompt:
                             if not final_text.strip():
                                 raise AppServerError("Final turn completed without a final message")
@@ -272,10 +288,10 @@ class SoftwareConversation:
                             self.pause(1)
                         break
             except (AppServerError, OSError) as error:
-                if not self.reprompt and not self.state["ending"]:
+                if not self.reprompt and not self.state["ending"] and not self.state.get("integrating"):
                     raise  # Single-turn jobs fail rather than dispatching another turn.
                 failures += 1
-                if self.state["ending"]:
+                if self.state["ending"] or self.state.get("integrating"):
                     wrap_failures += 1
                     if wrap_failures >= 3:
                         raise AppServerError("Wrap-up failed after three attempts; continuation remains disabled") from error

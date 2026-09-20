@@ -347,7 +347,8 @@ export default function SoftwareBuilderPage() {
       !originalTask ||
       submitting ||
       activeJob ||
-      (!pendingRepository && !selectedRepository)
+      (!pendingRepository && !selectedRepository) ||
+      (!pendingProject && !selectedProject)
     ) {
       return;
     }
@@ -791,7 +792,8 @@ export default function SoftwareBuilderPage() {
                   !jobsHydrated ||
                   Boolean(activeJob) ||
                   idea.trim().length === 0 ||
-                  (!pendingRepository && !selectedRepository)
+                  (!pendingRepository && !selectedRepository) ||
+                  (!pendingProject && !selectedProject)
                 }
                 onClick={() => void submitSoftwareBuilder()}
               >

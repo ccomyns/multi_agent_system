@@ -67,6 +67,7 @@ infra/orchestrator-runtime.zip
 infra/data-mining-orchestrator-runtime.zip
 infra/software-builder-runtime.zip
 infra/subagent-runtime.zip
+infra/software-subagent-runtime.zip
 
 # General local output
 *.log

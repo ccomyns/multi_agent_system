@@ -1,0 +1,6 @@
+#!/bin/bash
+set -euo pipefail
+runtime_bin_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+remaining=$((SUBAGENT_EXPIRES_AT - $(date +%s)))
+if (( remaining <= 0 )); then exit 124; fi
+exec /usr/bin/timeout --signal=TERM --kill-after=5s "${remaining}s" /opt/multi-agent/venv/bin/python "$runtime_bin_dir/subagent_runner.py"

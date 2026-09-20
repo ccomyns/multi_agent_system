@@ -1,6 +1,7 @@
 data "archive_file" "subagent_manager" {
   type        = "zip"
-  source_file = "${path.module}/../src/subagent_manager/handler.py"
+  source_dir  = "${path.module}/../src/subagent_manager"
+  excludes    = ["**/__pycache__/**", "**/*.pyc"]
   output_path = "${path.module}/subagent-manager.zip"
 }
 
@@ -24,30 +25,40 @@ resource "aws_lambda_function" "subagent_manager" {
 
   environment {
     variables = {
-      AGENT_WORKSPACE_BUCKET_NAME    = aws_s3_bucket.agent_workspace.id
-      AUDIT_BUCKET_NAME              = aws_s3_bucket.audit.id
-      CODEX_AUTH_SSM_PARAMETER_NAME  = local.codex_auth_ssm_parameter_name
-      GLOBAL_MEMORY_BUCKET_NAME      = aws_s3_bucket.global_memory.id
-      MAX_ACTIVE_SUBAGENTS           = tostring(var.max_active_subagents)
-      RUNTIME_ARTIFACT_BUCKET        = aws_s3_bucket.agent_workspace.id
-      RUNTIME_ARTIFACT_BUCKET_OWNER  = data.aws_caller_identity.current.account_id
-      STATE_TABLE_NAME               = aws_dynamodb_table.state.name
-      SUBAGENT_AMI_ID                = local.subagent_ami_id
-      SUBAGENT_INSTANCE_PROFILE_NAME = aws_iam_instance_profile.subagent.name
-      SUBAGENT_INSTANCE_TYPE         = var.subagent_instance_type
-      SUBAGENT_SECURITY_GROUP_ID     = aws_security_group.instances.id
-      SUBAGENT_SUBNET_ID             = aws_subnet.public.id
-      SUBAGENT_TTL_SECONDS           = tostring(var.subagent_ttl_seconds)
-      SUBAGENT_MODEL                 = var.subagent_model
-      SUBAGENT_RUNTIME_NAME          = "data-mining"
-      SUBAGENT_RUNTIME_S3_KEY        = aws_s3_object.subagent_runtime.key
-      SUBAGENT_RUNTIME_SHA256        = data.archive_file.subagent_runtime.output_sha256
+      AGENT_WORKSPACE_BUCKET_NAME              = aws_s3_bucket.agent_workspace.id
+      AUDIT_BUCKET_NAME                        = aws_s3_bucket.audit.id
+      CODEX_AUTH_SSM_PARAMETER_NAME            = local.codex_auth_ssm_parameter_name
+      GLOBAL_MEMORY_BUCKET_NAME                = aws_s3_bucket.global_memory.id
+      JOBS_TABLE_NAME                          = aws_dynamodb_table.jobs.name
+      GITHUB_REPOSITORY_ASSIGNMENTS_TABLE_NAME = aws_dynamodb_table.github_repository_assignments.name
+      SOFTWARE_SUBAGENT_RUNTIME_NAME           = "software-builder"
+      SOFTWARE_SUBAGENT_RUNTIME_S3_KEY         = aws_s3_object.software_subagent_runtime.key
+      SOFTWARE_SUBAGENT_RUNTIME_SHA256         = data.archive_file.software_subagent_runtime.output_sha256
+      SOFTWARE_SUBAGENT_IAM_PREFIX             = local.software_subagent_iam_prefix
+      SOFTWARE_SUBAGENT_BOUNDARY_ARN           = aws_iam_policy.software_subagent_boundary.arn
+      AWS_PARTITION                            = data.aws_partition.current.partition
+      CODEX_AUTH_PARAMETER_ARN                 = local.codex_auth_parameter_arn
+      MAX_ACTIVE_SUBAGENTS                     = tostring(var.max_active_subagents)
+      RUNTIME_ARTIFACT_BUCKET                  = aws_s3_bucket.agent_workspace.id
+      RUNTIME_ARTIFACT_BUCKET_OWNER            = data.aws_caller_identity.current.account_id
+      STATE_TABLE_NAME                         = aws_dynamodb_table.state.name
+      SUBAGENT_AMI_ID                          = local.subagent_ami_id
+      SUBAGENT_INSTANCE_PROFILE_NAME           = aws_iam_instance_profile.subagent.name
+      SUBAGENT_INSTANCE_TYPE                   = var.subagent_instance_type
+      SUBAGENT_SECURITY_GROUP_ID               = aws_security_group.instances.id
+      SUBAGENT_SUBNET_ID                       = aws_subnet.public.id
+      SUBAGENT_TTL_SECONDS                     = tostring(var.subagent_ttl_seconds)
+      SUBAGENT_MODEL                           = var.subagent_model
+      SUBAGENT_RUNTIME_NAME                    = "data-mining"
+      SUBAGENT_RUNTIME_S3_KEY                  = aws_s3_object.subagent_runtime.key
+      SUBAGENT_RUNTIME_SHA256                  = data.archive_file.subagent_runtime.output_sha256
     }
   }
 
   depends_on = [
     aws_cloudwatch_log_group.subagent_manager,
     aws_iam_role_policy.lambda,
+    aws_iam_role_policy.software_subagent_manager,
     aws_iam_role_policy_attachment.lambda_logs,
   ]
 }

@@ -67,7 +67,7 @@ class SoftwareBuilderAdminTests(unittest.TestCase):
         self.assertIn("router.push(jobDetailHref(job))", page)
         self.assertIn("return `/jobs/${encodeURIComponent(job.jobId)}`", jobs)
         self.assertNotIn("does not use the data-mining monitor", monitor_route)
-        self.assertIn('job.typeOfJob === "data_mining"', monitor_route)
+        self.assertNotIn('job.typeOfJob === "data_mining"', monitor_route)
 
     def test_software_orchestrator_exposes_the_recorded_website(self) -> None:
         telemetry_route = (

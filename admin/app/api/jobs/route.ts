@@ -448,6 +448,9 @@ export async function POST(request: Request) {
       );
     }
 
+    if (typeof input.projectName !== "string" || !input.projectName.trim()) {
+      return errorResponse("An S3 project is required for software-builder jobs.", 400);
+    }
     if (input.projectName !== undefined) {
       if (typeof input.projectName !== "string") {
         return errorResponse("projectName must be a string.", 400);

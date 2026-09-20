@@ -240,6 +240,7 @@ export function AgentTelemetryDetail({
         ) : (
           <div className="agent-detail-content">
             {error ? <div className="telemetry-refresh-warning">{error} Retrying automatically.</div> : null}
+            {payload.outputUri ? <div className="agent-detail-task"><strong>Output folder:</strong> {payload.outputUri}</div> : null}
             <div className="agent-detail-task"><strong>Task:</strong> {payload.task}</div>
             {payload.error ? (
               <div className="agent-detail-run-error" role="alert">

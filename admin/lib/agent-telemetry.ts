@@ -28,6 +28,7 @@ export type AgentTelemetryEvent = {
 };
 
 export type AgentTelemetryResponse = {
+  outputUri?: string;
   actorType: "orchestrator" | "subagent";
   agentId: string | null;
   jobType: JobType;
@@ -180,6 +181,7 @@ export function isAgentTelemetryResponse(value: unknown): value is AgentTelemetr
           typeof website.branch === "string" &&
           typeof website.commitSha === "string" &&
           typeof website.publishedAt === "string")) &&
+      (!("outputUri" in record) || typeof record.outputUri === "string") &&
       typeof record.task === "string" &&
       typeof record.status === "string" &&
       (!("error" in record) || record.error === null || typeof record.error === "string") &&

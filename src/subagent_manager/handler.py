@@ -6,6 +6,7 @@ import json
 import os
 import re
 import uuid
+from importlib import import_module
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -132,7 +133,7 @@ def _reserve_slot(
     orchestrator_id: str,
     agent_id: str,
     created_at: str,
-    handoff: dict[str, str],
+    handoff: dict[str, Any],
 ) -> bool:
     table_name = os.environ["STATE_TABLE_NAME"]
     limit = int(os.environ.get("MAX_ACTIVE_SUBAGENTS", "12"))
@@ -153,11 +154,25 @@ def _reserve_slot(
         model=handoff["model"],
         task=handoff["task"],
     )
+    if handoff.get("software"):
+        agent.update({
+            key: handoff[key] for key in (
+                "software", "output_bucket", "output_prefix", "expires_at", "iam_name",
+            )
+        })
+        agent["ttl_seconds"] = 1800
+        limit = 12
     counter_key = _counter_key(orchestrator_id)
 
     try:
         _client("dynamodb").transact_write_items(
-            TransactItems=[
+            TransactItems=([{"ConditionCheck": {
+                "TableName": os.environ["JOBS_TABLE_NAME"],
+                "Key": _ddb_item({"pk": f"JOB#{handoff['job_id']}"}),
+                "ConditionExpression": "#status = :running AND orchestrator_instance_id = :orch AND attribute_not_exists(end_requested_at) AND attribute_not_exists(delegation_closed_at)",
+                "ExpressionAttributeNames": {"#status": "status"},
+                "ExpressionAttributeValues": _ddb_item({":running": "running", ":orch": orchestrator_id}),
+            }}] if handoff.get("software") else []) + [
                 {
                     "Update": {
                         "TableName": table_name,
@@ -267,8 +282,9 @@ def _subagent_user_data(
     orchestrator_id: str,
     agent_id: str,
     ttl_seconds: int,
-    handoff: dict[str, str],
+    handoff: dict[str, Any],
 ) -> str:
+    runtime = "SOFTWARE_SUBAGENT" if handoff.get("software") else "SUBAGENT"
     return f"""#!/bin/bash
 set -euo pipefail
 
@@ -300,10 +316,12 @@ JOB_ID={handoff["job_id"]}
 AGENT_ID={agent_id}
 ORCHESTRATOR_INSTANCE_ID={orchestrator_id}
 SUBAGENT_MODEL={handoff["model"]}
-SUBAGENT_RUNTIME_NAME={os.environ["SUBAGENT_RUNTIME_NAME"]}
-SUBAGENT_RUNTIME_S3_KEY={os.environ["SUBAGENT_RUNTIME_S3_KEY"]}
-SUBAGENT_RUNTIME_SHA256={os.environ["SUBAGENT_RUNTIME_SHA256"]}
-TASK_S3_KEY={handoff["task_s3_key"]}
+SUBAGENT_RUNTIME_NAME={os.environ[runtime + "_RUNTIME_NAME"]}
+SUBAGENT_RUNTIME_S3_KEY={os.environ[runtime + "_RUNTIME_S3_KEY"]}
+SUBAGENT_RUNTIME_SHA256={os.environ[runtime + "_RUNTIME_SHA256"]}
+TASK_S3_KEY={json.dumps(handoff["task_s3_key"]) if handoff.get("software") else handoff["task_s3_key"]}
+OUTPUT_PREFIX={json.dumps(handoff.get("output_prefix", ""))}
+SUBAGENT_EXPIRES_AT={handoff.get("expires_at", "")}
 SUBAGENT_TTL_SECONDS={ttl_seconds}
 BOOTSTRAP_LOG_PATH=/var/log/multi-agent/subagent-bootstrap.log
 CODEX_LOG_PATH=/var/log/multi-agent/subagent-codex.log
@@ -319,7 +337,7 @@ systemctl start --no-block multi-agent-subagent.service
 def _launch_instance(
     orchestrator_id: str,
     agent_id: str,
-    handoff: dict[str, str],
+    handoff: dict[str, Any],
 ) -> str:
     ttl_seconds = int(os.environ.get("SUBAGENT_TTL_SECONDS", "1800"))
     response = _client("ec2").run_instances(
@@ -328,7 +346,7 @@ def _launch_instance(
         MinCount=1,
         MaxCount=1,
         ClientToken=agent_id,
-        IamInstanceProfile={"Name": os.environ["SUBAGENT_INSTANCE_PROFILE_NAME"]},
+        IamInstanceProfile={"Name": handoff.get("iam_name") or os.environ["SUBAGENT_INSTANCE_PROFILE_NAME"]},
         NetworkInterfaces=[
             {
                 "AssociatePublicIpAddress": True,
@@ -400,11 +418,25 @@ def _active_count(orchestrator_id: str) -> int:
     return int(result.get("Item", {}).get("active_count", Decimal(0)))
 
 
+def _validate_mining_job(job_id: str, orchestrator_id: str) -> None:
+    # Prevent a software orchestrator from selecting the broader mining role,
+    # including by naming an unrelated historical data-mining job.
+    software = import_module(f"{__package__}.software" if __package__ else "software")
+    job = software.table("JOBS_TABLE_NAME").get_item(
+        Key={"pk": f"JOB#{job_id}"}, ConsistentRead=True,
+    ).get("Item", {})
+    if (job.get("type_of_job") != "data_mining"
+            or job.get("status") != "running"
+            or job.get("orchestrator_instance_id") != orchestrator_id):
+        raise ValueError("The mining launch path requires this orchestrator's running data-mining job")
+
+
 def _spawn(event: dict[str, Any]) -> dict[str, Any]:
     try:
         orchestrator_id = _validate_id(event.get("orchestrator_id"), "orchestrator_id")
         agent_id = _validate_id(event.get("request_id") or str(uuid.uuid4()), "request_id")
         handoff = _task_handoff(event, agent_id)
+        _validate_mining_job(handoff["job_id"], orchestrator_id)
     except ValueError as error:
         return _response(400, accepted=False, error=str(error))
 
@@ -540,10 +572,10 @@ def _object_is_missing(error: ClientError) -> bool:
     return code in {"404", "NoSuchKey", "NotFound"} or status == 404
 
 
-def _read_projection_json(key: str) -> dict[str, Any] | None:
+def _read_projection_json(key: str, bucket: str | None = None) -> dict[str, Any] | None:
     try:
         response = _client("s3").get_object(
-            Bucket=os.environ["AGENT_WORKSPACE_BUCKET_NAME"],
+            Bucket=bucket or os.environ["AGENT_WORKSPACE_BUCKET_NAME"],
             Key=key,
         )
     except ClientError as error:
@@ -584,9 +616,11 @@ def _terminal_projection(agent: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(job_id, str) or not isinstance(agent_id, str):
         return {}
 
-    prefix = f"jobs/{job_id}/agents/{agent_id}"
-    completed = _read_projection_json(f"{prefix}/status/completed.json")
-    failed = None if completed is not None else _read_projection_json(
+    prefix = (agent["output_prefix"] + "_runtime") if agent.get("software") else f"jobs/{job_id}/agents/{agent_id}"
+    def read(key: str) -> dict[str, Any] | None:
+        return _read_projection_json(key, agent.get("output_bucket"))
+    completed = read(f"{prefix}/status/completed.json")
+    failed = None if completed is not None else read(
         f"{prefix}/status/failed.json"
     )
     if completed is None and failed is None:
@@ -598,7 +632,11 @@ def _terminal_projection(agent: dict[str, Any]) -> dict[str, Any]:
             "failure_reason": error[:500] if isinstance(error, str) else None,
         }
 
-    telemetry = _read_projection_json(f"{prefix}/telemetry/latest.json") or {}
+    if agent.get("software"):
+        software = import_module(f"{__package__}.software" if __package__ else "software")
+        if not software.description(agent):
+            return {"result_status": "failed", "failure_reason": "Missing or invalid description.md"}
+    telemetry = read(f"{prefix}/telemetry/latest.json") or {}
     usage = telemetry.get("usage")
     total_tokens = usage.get("total_tokens") if isinstance(usage, dict) else None
     return {
@@ -612,9 +650,9 @@ def _terminal_projection(agent: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _handle_termination(event: dict[str, Any]) -> dict[str, Any]:
+def _handle_termination(event: dict[str, Any], agent: dict[str, Any] | None = None) -> dict[str, Any]:
     instance_id = event["detail"]["instance-id"]
-    agent = _find_agent_by_instance(instance_id)
+    agent = agent or _find_agent_by_instance(instance_id)
     if not agent:
         return {"ignored": True, "reason": "instance_not_managed", "instance_id": instance_id}
 
@@ -630,6 +668,8 @@ def _handle_termination(event: dict[str, Any]) -> dict[str, Any]:
         print(f"could not build terminal projection for {agent_id}: {error}")
         projection = {}
 
+    if agent.get("software") and not projection:
+        projection = {"result_status": "failed", "failure_reason": "VM terminated without a terminal status"}
     assignments = ["active = :false", "#state = :terminated", "terminated_at = :now"]
     values: dict[str, Any] = {
         ":false": False,
@@ -712,6 +752,12 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     ):
         return _handle_termination(event)
 
+    if event.get("action") == "software_reconcile":
+        software = import_module(f"{__package__}.software" if __package__ else "software")
+        return software.reconcile()
+    if event.get("action", "").startswith("software_"):
+        software = import_module(f"{__package__}.software" if __package__ else "software")
+        return software.dispatch(event)
     if event.get("action", "spawn") != "spawn":
         return _response(400, accepted=False, error="unsupported_action")
     return _spawn(event)

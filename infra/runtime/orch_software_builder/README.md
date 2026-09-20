@@ -10,9 +10,11 @@ Vercel MCP configuration remain in use. Research runtimes still use `codex exec`
 - `/software` submits `reprompt` alongside `originalTask`; the launch API validates
   it (up to 4,000 characters) and stores it on the job record. Missing, null, empty,
   or whitespace-only REPROMPT is stored as null and selects single-turn mode.
-- In single-turn mode, the runner saves the first turn's final response and exits
-  through the normal validation, publication of results, and job-completion path.
-  Failed turns fail the job instead of automatically dispatching another turn.
+- In single-turn mode, the runner closes delegation when the initial turn ends
+  and waits for all reserved subagents. Uncollected outcomes trigger one final
+  integration turn on the same thread. With no uncollected outcomes, the initial
+  response is final. Ordinary failed turns fail the job; final integration retries
+  are bounded to three attempts.
 - A non-empty REPROMPT selects continuous mode. After every successful ordinary
   turn, the Python bootstrap runner starts another
   turn on the same thread with continuation instructions, the original goal, and
@@ -45,11 +47,11 @@ dispatching each turn. RPC handshakes and AWS calls can delay observation. Once
 observed, ending is persisted locally and normal continuation is disabled:
 
 1. Request `turn/interrupt` for any ordinary turn still running.
-2. Start a dedicated final turn on the same thread with the wrap-up message.
+2. Close delegation atomically against launches, drain all reserved subagents,
+   and start a dedicated final turn on the same thread with their outcomes.
 3. Instruct Codex to launch no more subagents, stop expanding scope, validate,
    commit, push, and publish applicable website changes to Vercel. Explicit user
-   instructions against deployment still apply. No subagent tools are configured
-   for this runtime.
+   instructions against deployment still apply. The manager rejects further launches.
 4. Save the final agent message and exit both the turn loop and app-server process.
 5. Run the existing clean-tree/remote-commit validation, upload results, mark the
    job completed, and release the lock. The systemd exit hook shuts down the
@@ -90,3 +92,14 @@ for newly launched jobs; an existing worker is not updated in place. No migratio
 or compatibility path for old software jobs is included.
 
 Protocol reference: https://learn.chatgpt.com/docs/app-server
+
+## Research agents
+
+The software MCP exposes `spawn_agent(task)` and `wait_on_any(agent_ids,
+timeout_seconds)`. The manager reads the immutable project assignment and caps
+active reservations at 12. Each agent gets a separate EC2 role whose S3 access
+is confined to `<project>/<agent>/` in the actual global-memory bucket. Agents
+have no application GitHub, database, or publishing credentials. They choose their
+output formats and must upload `description.md`; the separate software worker
+runtime resumes Codex until this file is valid or the total 30-minute deadline
+expires. See the root README for storage, cleanup and deployment details.

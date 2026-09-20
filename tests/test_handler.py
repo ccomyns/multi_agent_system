@@ -26,11 +26,14 @@ class SpawnTests(unittest.TestCase):
             clear=False,
         )
         self.environment.start()
+        self.job_validation = patch.object(handler, "_validate_mining_job")
+        self.job_validation.start()
         handler._clients.clear()
 
     def tearDown(self) -> None:
         handler._clients.clear()
         self.environment.stop()
+        self.job_validation.stop()
 
     @staticmethod
     def handoff(agent_id: str) -> dict[str, str]:
