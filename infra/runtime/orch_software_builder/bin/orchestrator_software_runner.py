@@ -932,7 +932,7 @@ def main() -> int:
             try:
                 software_agents.request("cancel")
             except Exception:
-                LOG.exception("could not cancel subagents; scheduled reconciliation will retry")
+                LOG.exception("could not cancel subagents; workers retain their bootstrap timeouts")
             try:
                 telemetry_updates: dict[str, Any] = {}
                 if (

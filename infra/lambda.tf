@@ -90,6 +90,7 @@ resource "aws_lambda_function" "subagent_terminator" {
   environment {
     variables = {
       AGENT_WORKSPACE_BUCKET_NAME = aws_s3_bucket.agent_workspace.id
+      GLOBAL_MEMORY_BUCKET_NAME   = aws_s3_bucket.global_memory.id
       STATE_TABLE_NAME            = aws_dynamodb_table.state.name
     }
   }
@@ -263,4 +264,13 @@ resource "aws_lambda_permission" "eventbridge" {
   function_name = aws_lambda_function.subagent_manager.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.subagent_terminated.arn
+}
+
+resource "aws_lambda_permission" "global_memory_termination_requests" {
+  statement_id   = "AllowGlobalMemoryTerminationRequests"
+  action         = "lambda:InvokeFunction"
+  function_name  = aws_lambda_function.subagent_terminator.function_name
+  principal      = "s3.amazonaws.com"
+  source_arn     = aws_s3_bucket.global_memory.arn
+  source_account = data.aws_caller_identity.current.account_id
 }

@@ -650,11 +650,28 @@ def _terminal_projection(agent: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _cleanup_software_agent(agent: dict[str, Any]) -> None:
+    if agent.get("software"):
+        software = import_module(f"{__package__}.software" if __package__ else "software")
+        software.cleanup(agent)
+
+
 def _handle_termination(event: dict[str, Any], agent: dict[str, Any] | None = None) -> dict[str, Any]:
     instance_id = event["detail"]["instance-id"]
     agent = agent or _find_agent_by_instance(instance_id)
     if not agent:
-        return {"ignored": True, "reason": "instance_not_managed", "instance_id": instance_id}
+        # A software launch response may be lost before the instance-index is
+        # written. Resolve that single termination event from its launch tags.
+        reservations = _client("ec2").describe_instances(InstanceIds=[instance_id]).get("Reservations", [])
+        for reservation in reservations:
+            for instance in reservation.get("Instances", []):
+                tags = {tag["Key"]: tag["Value"] for tag in instance.get("Tags", [])}
+                if tags.get("ManagedBy") == "subagent-manager" and tags.get("AgentId", "").startswith("sw-") and tags.get("OrchestratorId"):
+                    candidate = _existing_agent(tags["OrchestratorId"], tags["AgentId"])
+                    if candidate and candidate.get("software") and candidate.get("instance_id") in {None, instance_id}:
+                        agent = candidate
+        if not agent:
+            return {"ignored": True, "reason": "instance_not_managed", "instance_id": instance_id}
 
     terminated_at = event.get("time") or _now()
     orchestrator_id = agent["orchestrator_id"]
@@ -721,6 +738,12 @@ def _handle_termination(event: dict[str, Any], agent: dict[str, Any] | None = No
         )
     except ClientError as error:
         if error.response["Error"]["Code"] == "TransactionCanceledException":
+            if agent.get("software"):
+                current = _existing_agent(orchestrator_id, agent_id)
+                if current and current.get("active") is False:
+                    _cleanup_software_agent(current)
+                else:
+                    raise
             return {"ignored": True, "reason": "already_reconciled", "instance_id": instance_id}
         raise
 
@@ -736,6 +759,7 @@ def _handle_termination(event: dict[str, Any], agent: dict[str, Any] | None = No
             "terminated_at": terminated_at,
         },
     )
+    _cleanup_software_agent(agent)
     return {
         "reconciled": True,
         "orchestrator_id": orchestrator_id,
@@ -752,9 +776,6 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     ):
         return _handle_termination(event)
 
-    if event.get("action") == "software_reconcile":
-        software = import_module(f"{__package__}.software" if __package__ else "software")
-        return software.reconcile()
     if event.get("action", "").startswith("software_"):
         software = import_module(f"{__package__}.software" if __package__ else "software")
         return software.dispatch(event)

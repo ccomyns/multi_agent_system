@@ -33,27 +33,9 @@ resource "aws_iam_role_policy" "software_subagent_manager" {
       { Effect = "Allow", Action = "iam:PassRole", Resource = local.software_subagent_role_arn,
       Condition = { StringEquals = { "iam:PassedToService" = "ec2.amazonaws.com" } } },
       { Effect = "Allow", Action = "ec2:DescribeInstances", Resource = "*" },
-      { Effect = "Allow", Action = "dynamodb:Scan", Resource = aws_dynamodb_table.state.arn },
       { Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:ConditionCheckItem"], Resource = aws_dynamodb_table.jobs.arn },
       { Effect = "Allow", Action = "dynamodb:GetItem", Resource = aws_dynamodb_table.github_repository_assignments.arn },
       { Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = "${aws_s3_bucket.global_memory.arn}/*" }
     ]
   })
-}
-
-resource "aws_cloudwatch_event_rule" "software_subagent_reconcile" {
-  name                = "${var.project_name}-software-agent-reconcile"
-  schedule_expression = "rate(1 minute)"
-}
-resource "aws_cloudwatch_event_target" "software_subagent_reconcile" {
-  rule  = aws_cloudwatch_event_rule.software_subagent_reconcile.name
-  arn   = aws_lambda_function.subagent_manager.arn
-  input = jsonencode({ action = "software_reconcile" })
-}
-resource "aws_lambda_permission" "software_subagent_reconcile" {
-  statement_id  = "SoftwareSubagentReconcile"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.subagent_manager.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.software_subagent_reconcile.arn
 }

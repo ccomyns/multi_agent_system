@@ -27,6 +27,17 @@ class SubagentTerminationInfrastructureTests(unittest.TestCase):
         self.assertIn('filter_prefix       = "jobs/"', storage_tf)
         self.assertIn('filter_suffix       = "termination/request.json"', storage_tf)
 
+    def test_software_uses_s3_termination_without_a_periodic_sweep(self):
+        software_tf = (INFRA_ROOT / "software_subagents.tf").read_text()
+        storage_tf = (INFRA_ROOT / "storage.tf").read_text()
+        lambda_tf = (INFRA_ROOT / "lambda.tf").read_text()
+        self.assertNotIn("schedule_expression", software_tf)
+        self.assertNotIn("software_reconcile", software_tf)
+        self.assertNotIn("dynamodb:Scan", software_tf)
+        self.assertIn('filter_suffix       = "_runtime/termination/request.json"', storage_tf)
+        self.assertIn('resource "aws_lambda_permission" "global_memory_termination_requests"', lambda_tf)
+        self.assertIn('resource "aws_cloudwatch_event_rule" "subagent_terminated"', lambda_tf)
+
     def test_subagent_image_version_is_bumped_for_request_publisher(self) -> None:
         variables_tf = (INFRA_ROOT / "variables.tf").read_text(encoding="utf-8")
         agent_block = variables_tf.split('variable "agent_image_version"', 1)[1].split(

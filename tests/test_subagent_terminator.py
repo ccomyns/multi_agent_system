@@ -44,6 +44,7 @@ class SubagentTerminatorTests(unittest.TestCase):
             {
                 "AGENT_WORKSPACE_BUCKET_NAME": "agent-workspace-bucket",
                 "STATE_TABLE_NAME": "state-table",
+                "GLOBAL_MEMORY_BUCKET_NAME": "memory-bucket",
             },
             clear=False,
         )
@@ -215,6 +216,50 @@ class SubagentTerminatorTests(unittest.TestCase):
             Key=f"{self.prefix}/result/failure.md",
         )
         ec2.terminate_instances.assert_called_once_with(InstanceIds=[self.instance_id])
+
+
+class SoftwareSubagentTerminatorTests(SubagentTerminatorTests):
+    agent_id = "sw-" + "a" * 32
+
+    @property
+    def prefix(self):
+        return f"Health Research/{self.agent_id}/_runtime"
+
+    def event(self):
+        event = super().event()
+        event['Records'][0]['s3']['bucket']['name'] = 'memory-bucket'
+        event['Records'][0]['s3']['object']['key'] = event['Records'][0]['s3']['object']['key'].replace(' ', '+')
+        return event
+
+    def clients(self, **kwargs):
+        s3, table, ec2 = super().clients(**kwargs)
+        table.get_item.return_value['Item'].update(software=True, output_bucket='memory-bucket', output_prefix=f'Health Research/{self.agent_id}/')
+        return s3, table, ec2
+
+    def test_failed_request_uses_the_failure_marker_before_termination(self):
+        s3, table, ec2 = self.clients(request=self.request('failed'), status=self.status('failed'))
+        with patch.object(handler, '_client', side_effect=lambda name: {'s3': s3, 'table': table, 'ec2': ec2}[name]):
+            handler.lambda_handler(self.event(), None)
+        s3.head_object.assert_called_once_with(Bucket='memory-bucket', Key=f'{self.prefix}/result/failure.md')
+        ec2.terminate_instances.assert_called_once_with(InstanceIds=[self.instance_id])
+
+    def test_other_project_cannot_terminate_this_agent(self):
+        s3, table, ec2 = self.clients()
+        table.get_item.return_value['Item']['output_prefix'] = f'Other Project/{self.agent_id}/'
+        with patch.object(handler, '_client', side_effect=lambda name: {'s3': s3, 'table': table, 'ec2': ec2}[name]):
+            with self.assertRaisesRegex(ValueError, 'assigned software folder'):
+                handler.lambda_handler(self.event(), None)
+        ec2.terminate_instances.assert_not_called()
+        s3.head_object.assert_not_called()
+
+    def test_other_instance_cannot_be_selected_in_request(self):
+        request = self.request()
+        request['subagent_instance_id'] = 'i-00000000000000000'
+        s3, table, ec2 = self.clients(request=request)
+        with patch.object(handler, '_client', side_effect=lambda name: {'s3': s3, 'table': table, 'ec2': ec2}[name]):
+            with self.assertRaisesRegex(ValueError, 'DynamoDB agent instance_id'):
+                handler.lambda_handler(self.event(), None)
+        ec2.terminate_instances.assert_not_called()
 
 
 if __name__ == "__main__":

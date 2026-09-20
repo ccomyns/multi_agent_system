@@ -17,6 +17,10 @@ _REQUEST_KEY_PATTERN = re.compile(
     r"^jobs/(?P<job_id>job_[a-z0-9]{4,12}_[0-9a-f]{8})/"
     r"agents/(?P<agent_id>agent-[0-9a-f]{24})/termination/request\.json$"
 )
+_SOFTWARE_REQUEST_KEY_PATTERN = re.compile(
+    r"^(?P<project>[^/]+)/(?P<agent_id>sw-[0-9a-f]{32})/"
+    r"_runtime/termination/request\.json$"
+)
 _INSTANCE_ID_PATTERN = re.compile(r"^i-[0-9a-f]{8,17}$")
 _MAX_JSON_BYTES = 64 * 1024
 _clients: dict[str, Any] = {}
@@ -59,8 +63,8 @@ def _read_json_object(
     return payload
 
 
-def _request_identity(key: str, request: dict[str, Any]) -> dict[str, str]:
-    match = _REQUEST_KEY_PATTERN.fullmatch(key)
+def _request_identity(key: str, request: dict[str, Any], *, software: bool = False) -> dict[str, str]:
+    match = (_SOFTWARE_REQUEST_KEY_PATTERN if software else _REQUEST_KEY_PATTERN).fullmatch(key)
     if match is None:
         raise ValueError("unexpected termination-request key")
     if request.get("schema_version") != 1:
@@ -70,9 +74,16 @@ def _request_identity(key: str, request: dict[str, Any]) -> dict[str, str]:
     if state not in {"completed", "failed"}:
         raise ValueError("termination-request state must be completed or failed")
     marker_name = "completed.md" if state == "completed" else "failure.md"
-    prefix = f"jobs/{match['job_id']}/agents/{match['agent_id']}"
+    if software:
+        job_id = request.get("job_id")
+        if not isinstance(job_id, str) or not re.fullmatch(r"job_[a-z0-9]{4,12}_[0-9a-f]{8}", job_id):
+            raise ValueError("termination-request job_id is invalid")
+        prefix = f"{match['project']}/{match['agent_id']}/_runtime"
+    else:
+        job_id = match["job_id"]
+        prefix = f"jobs/{job_id}/agents/{match['agent_id']}"
     expected = {
-        "job_id": match["job_id"],
+        "job_id": job_id,
         "agent_id": match["agent_id"],
         "status_key": f"{prefix}/status/{state}.json",
         "terminal_marker_key": f"{prefix}/result/{marker_name}",
@@ -184,7 +195,8 @@ def _handle_record(record: dict[str, Any]) -> dict[str, Any]:
     if record.get("eventSource") != "aws:s3":
         raise ValueError("unsupported event source")
     bucket = record.get("s3", {}).get("bucket", {}).get("name")
-    if bucket != os.environ["AGENT_WORKSPACE_BUCKET_NAME"]:
+    software = bool(bucket) and bucket == os.environ.get("GLOBAL_MEMORY_BUCKET_NAME")
+    if not software and bucket != os.environ["AGENT_WORKSPACE_BUCKET_NAME"]:
         raise ValueError("termination request came from an unexpected bucket")
     object_record = record.get("s3", {}).get("object", {})
     raw_key = object_record.get("key")
@@ -196,12 +208,18 @@ def _handle_record(record: dict[str, Any]) -> dict[str, Any]:
         version_id = None
 
     request = _read_json_object(bucket, key, version_id=version_id)
-    identity = _request_identity(key, request)
-    _validate_terminal_artifacts(bucket, identity)
+    identity = _request_identity(key, request, software=software)
     agent = _agent_record(identity)
     if agent is None:
         raise ValueError("termination request has no matching DynamoDB agent")
     _validate_agent_record(agent, identity)
+    if software and (
+        agent.get("software") is not True
+        or agent.get("output_bucket") != bucket
+        or key != agent.get("output_prefix", "") + "_runtime/termination/request.json"
+    ):
+        raise ValueError("termination request does not match the assigned software folder")
+    _validate_terminal_artifacts(bucket, identity)
     if agent.get("active") is not True:
         return {
             "ignored": True,

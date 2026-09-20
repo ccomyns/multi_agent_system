@@ -99,8 +99,9 @@ def spawn(event):
         try:
             cleanup(agent)
         except Exception as cleanup_error:
-            print(f'Credential cleanup will be retried: {cleanup_error}')
+            print(f'Credential cleanup failed after launch failure: {cleanup_error}')
         raise
+    instance_id = None
     try:
         # EC2 observes instance profile changes asynchronously. Retries retain the
         # same client token, slot and identity, including ambiguous launch results.
@@ -114,8 +115,16 @@ def spawn(event):
                 time.sleep(5)
         base._mark_launched(orch, agent_id, instance_id, base._now())
     except Exception as error:
-        base._mark_launch_unknown(orch, agent_id, base._now(), str(error))
-        # Reaper resolves uncertain EC2 outcomes before deleting credentials.
+        if instance_id is not None:
+            # Keep the slot and credentials until the termination event arrives.
+            base._mark_launch_unknown(orch, agent_id, base._now(), str(error))
+            base._client('ec2').terminate_instances(InstanceIds=[instance_id])
+        elif isinstance(error, ClientError):
+            base._release_failed_launch(orch, agent_id, base._now(), str(error))
+            cleanup(agent)
+        else:
+            # As in mining, preserve the slot if EC2 may have accepted the launch.
+            base._mark_launch_unknown(orch, agent_id, base._now(), str(error))
         raise
     return base._response(201, accepted=True, agent_id=agent_id, instance_id=instance_id, output_uri=f's3://{bucket}/{prefix}')
 
@@ -191,54 +200,3 @@ def dispatch(event):
         return base._response(200, agents=results)
     except ValueError as error:
         return base._response(400, error=str(error))
-
-
-def reconcile():
-    """Recover missed termination events, provisioning errors and expired VMs."""
-    cursor = None
-    while True:
-        page = base._client('table').scan(**({'ExclusiveStartKey': cursor} if cursor else {}))
-        for row in page.get('Items', []):
-            if not row.get('software') or row.get('iam_cleaned'):
-                continue
-            try:
-                reconcile_agent(row)
-            except Exception as error:
-                print(f"software reconciliation failed for {row['agent_id']}: {error}")
-        cursor = page.get('LastEvaluatedKey')
-        if not cursor:
-            return {'reconciled': True}
-
-
-def reconcile_agent(row):
-    ec2 = base._client('ec2')
-    reservations = ec2.describe_instances(Filters=[{'Name': 'tag:AgentId', 'Values': [row['agent_id']]}, {'Name': 'tag:OrchestratorId', 'Values': [row['orchestrator_id']]}])['Reservations']
-    instances = [i for r in reservations for i in r['Instances']]
-    alive = [i for i in instances if i['State']['Name'] != 'terminated']
-    job = table('JOBS_TABLE_NAME').get_item(Key={'pk': f"JOB#{row['job_id']}"}, ConsistentRead=True).get('Item', {})
-    expired = time.time() >= int(row['expires_at'])
-    parent_dead = False
-    if alive and job.get('status') == 'running':
-        try:
-            parent = ec2.describe_instances(InstanceIds=[row['orchestrator_id']])
-        except ClientError as error:
-            if error.response['Error']['Code'] != 'InvalidInstanceID.NotFound':
-                raise
-            parent = {'Reservations': []}
-        parent_dead = not any(i['State']['Name'] in {'pending', 'running'} for r in parent['Reservations'] for i in r['Instances'])
-    if alive:
-        if parent_dead or expired or not row.get('active') or job.get('status') != 'running':
-            ec2.terminate_instances(InstanceIds=[i['InstanceId'] for i in alive])
-        if not row.get('instance_id') and row.get('active'):
-            base._mark_launched(row['orchestrator_id'], row['agent_id'], alive[0]['InstanceId'], base._now())
-        return
-    if row.get('active'):
-        if instances:
-            # Use the strongly read row: the instance GSI may lag or never have
-            # been written when a launch response was lost.
-            base._handle_termination({'detail': {'instance-id': instances[0]['InstanceId']}}, agent=row)
-        elif expired:
-            base._release_failed_launch(row['orchestrator_id'], row['agent_id'], base._now(), 'Provisioning deadline expired without an instance')
-        else:
-            return
-    cleanup(row)

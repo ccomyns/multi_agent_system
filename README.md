@@ -662,8 +662,13 @@ object reads and writes are limited to the actual global-memory bucket at
 The only bootstrap read exceptions are its exact runtime ZIP and the Codex auth
 parameter. Each role has a managed permissions boundary; the per-agent inline
 policy supplies the literal folder restriction. The manager removes roles and
-profiles after confirmed VM termination. A minute-based reconciler also handles
-missed termination events, expired reservations and failed parent jobs.
+profiles in the EC2 termination-event handler after confirmed VM termination.
+Software agents use the same event-driven termination flow as mining: upload
+status, a terminal marker, then a termination request to S3. The existing
+terminator Lambda validates the job, instance and assigned folder before calling
+EC2 termination. Software requests remain within their assigned global-memory
+folder under `_runtime/termination/request.json`. The bootstrap timeout and
+systemd shutdown hook remain in place. There is no periodic cleanup sweep.
 
 Agents choose their own artifact formats. The required `description.md` must be
 nonempty UTF-8, at most 1 MiB, and present in S3. After each Codex exit, the runner

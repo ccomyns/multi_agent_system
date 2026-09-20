@@ -37,7 +37,7 @@ class WorkerTests(unittest.TestCase):
         s3, ssm, telemetry = Mock(), Mock(), Mock()
         s3.get_object.return_value = {'Body': io.BytesIO(json.dumps({'task': 'Research trial results'}).encode())}
         ssm.get_parameter.return_value = {'Parameter': {'Value': '{}'}}
-        environment = {'GLOBAL_MEMORY_BUCKET_NAME': 'memory', 'OUTPUT_PREFIX': 'project/agent/', 'SUBAGENT_EXPIRES_AT': str(deadline or int(time.time()) + 1800), 'JOB_ID': 'job_abc1_1234abcd', 'AGENT_ID': 'sw-one', 'ORCHESTRATOR_INSTANCE_ID': 'i-parent', 'TASK_S3_KEY': 'project/agent/_runtime/input.json', 'CODEX_AUTH_SSM_PARAMETER_NAME': '/codex', 'SUBAGENT_MODEL': 'model'}
+        environment = {'GLOBAL_MEMORY_BUCKET_NAME': 'memory', 'OUTPUT_PREFIX': 'project/agent/', 'SUBAGENT_EXPIRES_AT': str(deadline or int(time.time()) + 1800), 'JOB_ID': 'job_abc1_1234abcd', 'AGENT_ID': 'sw-one', 'ORCHESTRATOR_INSTANCE_ID': 'i-parent', 'TASK_S3_KEY': 'project/agent/_runtime/input.json', 'CODEX_AUTH_SSM_PARAMETER_NAME': '/codex', 'SUBAGENT_MODEL': 'model', 'SUBAGENT_INSTANCE_ID': 'i-child'}
         with patch.dict(os.environ, environment), patch.object(worker, 'WORK_DIR', root), patch.object(worker.boto3, 'client', side_effect=lambda service: s3 if service == 's3' else ssm), patch.object(worker, 'TelemetryRecorder', return_value=telemetry), patch.object(worker.signal, 'signal'), patch.object(worker, 'execute', execute), patch.object(worker, 'valid_description', valid), patch.object(worker.time, 'sleep'):
             try:
                 result = worker.main()
@@ -57,8 +57,12 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(first.args[1], second.args[1])
             self.assertIn('description.md', second.args[0][-1])
             self.assertTrue(any(call.args[0] == 'description_retry' for call in telemetry.record.call_args_list))
-            self.assertEqual(s3.put_object.call_args.kwargs['Key'], 'project/agent/_runtime/status/completed.json')
-            self.assertEqual(json.loads(s3.put_object.call_args.kwargs['Body'])['attempts'], 2)
+            self.assertEqual([call.kwargs['Key'] for call in s3.put_object.call_args_list], [
+                'project/agent/_runtime/status/completed.json',
+                'project/agent/_runtime/result/completed.md',
+                'project/agent/_runtime/termination/request.json',
+            ])
+            self.assertEqual(json.loads(s3.put_object.call_args_list[0].kwargs['Body'])['attempts'], 2)
 
     def test_nonzero_exit_retries_even_with_description(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -73,7 +77,8 @@ class WorkerTests(unittest.TestCase):
             result, s3, _ = self.run_worker(Path(temp), execute, Mock(), deadline=int(time.time()) - 1)
             self.assertIsInstance(result, TimeoutError)
             execute.assert_not_called()
-            self.assertEqual(s3.put_object.call_args.kwargs['Key'], 'project/agent/_runtime/status/failed.json')
+            self.assertEqual(s3.put_object.call_args_list[0].kwargs['Key'], 'project/agent/_runtime/status/failed.json')
+            self.assertEqual(s3.put_object.call_args.kwargs['Key'], 'project/agent/_runtime/termination/request.json')
 
     def test_s3_outage_reports_failure_without_reprompting_as_missing(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -81,7 +86,8 @@ class WorkerTests(unittest.TestCase):
             result, s3, _ = self.run_worker(Path(temp), execute, Mock(side_effect=RuntimeError('S3 unavailable')))
             self.assertIsInstance(result, RuntimeError)
             execute.assert_called_once()
-            self.assertEqual(s3.put_object.call_args.kwargs['Key'], 'project/agent/_runtime/status/failed.json')
+            self.assertEqual(s3.put_object.call_args_list[0].kwargs['Key'], 'project/agent/_runtime/status/failed.json')
+            self.assertEqual(s3.put_object.call_args.kwargs['Key'], 'project/agent/_runtime/termination/request.json')
 
     def test_timeout_kills_entire_process_group(self):
         process = Mock(pid=123)

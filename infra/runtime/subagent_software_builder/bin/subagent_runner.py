@@ -71,6 +71,37 @@ def execute(command, deadline, telemetry, session):
         process.stdout.close()
 
 
+def publish_terminal(s3, bucket, prefix, state, **details):
+    """Use the mining terminal-status -> marker -> S3 termination-request flow."""
+    runtime_prefix = prefix + '_runtime'
+    identity = {
+        'schema_version': 1, 'state': state,
+        'job_id': os.environ['JOB_ID'], 'agent_id': os.environ['AGENT_ID'],
+        'orchestrator_instance_id': os.environ['ORCHESTRATOR_INSTANCE_ID'],
+        'subagent_instance_id': os.environ['SUBAGENT_INSTANCE_ID'],
+        'recorded_at': utc_now(),
+    }
+    # Upload logs before the event that can terminate this machine.
+    for variable, name in [('BOOTSTRAP_LOG_PATH', 'bootstrap.log'), ('CODEX_LOG_PATH', 'codex.log')]:
+        path = os.environ.get(variable)
+        if path and Path(path).is_file():
+            try:
+                s3.upload_file(path, bucket, runtime_prefix + '/debug/' + name)
+            except Exception:
+                pass
+    status_key = f'{runtime_prefix}/status/{state}.json'
+    marker = 'completed.md' if state == 'completed' else 'failure.md'
+    marker_key = f'{runtime_prefix}/result/{marker}'
+    s3.put_object(Bucket=bucket, Key=status_key, Body=json.dumps({**identity, **details}).encode(), ContentType='application/json')
+    s3.put_object(Bucket=bucket, Key=marker_key, Body=f'Subagent {state}.\n'.encode(), ContentType='text/markdown')
+    try:
+        s3.put_object(Bucket=bucket, Key=runtime_prefix + '/termination/request.json', Body=json.dumps({
+            **identity, 'status_key': status_key, 'terminal_marker_key': marker_key,
+        }).encode(), ContentType='application/json')
+    except Exception:
+        print('Could not request control-plane termination; relying on guest shutdown')
+
+
 def main():
     s3 = boto3.client('s3')
     bucket, prefix = os.environ['GLOBAL_MEMORY_BUCKET_NAME'], os.environ['OUTPUT_PREFIX']
@@ -120,7 +151,7 @@ Your total deadline, including corrective retries, is 30 minutes from allocation
                 telemetry.record('run_completed', 'S3 description verified', codex_finished_at=utc_now(), codex_exit_code=code)
                 telemetry.publish_raw_events(strict=True)
                 telemetry.publish(strict=True)
-                s3.put_object(Bucket=bucket, Key=prefix + '_runtime/status/completed.json', Body=json.dumps({'attempts': attempt, 'completed_at': utc_now()}).encode(), ContentType='application/json')
+                publish_terminal(s3, bucket, prefix, 'completed', attempts=attempt, completed_at=utc_now())
                 return 0
             telemetry.record('description_retry', f'Attempt {attempt}: exit {code}; completion requires exit 0 and a valid S3 description.md')
             prompt = f'Continue the assigned task using the existing context and files. Last exit code: {code}. Ensure s3://{bucket}/{prefix}description.md exists, is nonempty UTF-8 and at most 1 MiB, and finish successfully. Original task:\n{task}'
@@ -130,19 +161,10 @@ Your total deadline, including corrective retries, is 30 minutes from allocation
         try:
             telemetry.record('run_failed', str(error)[:500], codex_finished_at=utc_now())
             telemetry.publish_raw_events(strict=True)
-            s3.put_object(Bucket=bucket, Key=prefix + '_runtime/status/failed.json', Body=json.dumps({'error': str(error)[:500]}).encode(), ContentType='application/json')
+            publish_terminal(s3, bucket, prefix, 'failed', error=str(error)[:500])
         except Exception:
             pass
         raise
-    finally:
-        # Logs remain within the same IAM-enforced folder as every other write.
-        for variable, name in [('BOOTSTRAP_LOG_PATH', 'bootstrap.log'), ('CODEX_LOG_PATH', 'codex.log')]:
-            path = os.environ.get(variable)
-            if path and Path(path).is_file():
-                try:
-                    s3.upload_file(path, bucket, prefix + '_runtime/debug/' + name)
-                except Exception:
-                    pass
 
 
 if __name__ == '__main__':

@@ -227,3 +227,15 @@ resource "aws_dynamodb_table" "state" {
     enabled = true
   }
 }
+
+resource "aws_s3_bucket_notification" "global_memory" {
+  bucket = aws_s3_bucket.global_memory.id
+
+  lambda_function {
+    lambda_function_arn = aws_lambda_function.subagent_terminator.arn
+    events              = ["s3:ObjectCreated:Put"]
+    filter_suffix       = "_runtime/termination/request.json"
+  }
+
+  depends_on = [aws_lambda_permission.global_memory_termination_requests]
+}

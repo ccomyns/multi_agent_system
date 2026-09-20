@@ -121,7 +121,10 @@ resource "aws_iam_role_policy" "subagent_terminator" {
         Resource = [
           "${aws_s3_bucket.agent_workspace.arn}/jobs/*/agents/*/termination/request.json",
           "${aws_s3_bucket.agent_workspace.arn}/jobs/*/agents/*/status/*.json",
-          "${aws_s3_bucket.agent_workspace.arn}/jobs/*/agents/*/result/*.md"
+          "${aws_s3_bucket.agent_workspace.arn}/jobs/*/agents/*/result/*.md",
+          "${aws_s3_bucket.global_memory.arn}/*/sw-*/_runtime/termination/request.json",
+          "${aws_s3_bucket.global_memory.arn}/*/sw-*/_runtime/status/*.json",
+          "${aws_s3_bucket.global_memory.arn}/*/sw-*/_runtime/result/*.md"
         ]
       },
       {

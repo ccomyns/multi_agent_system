@@ -127,23 +127,30 @@ class SoftwareManagerTests(unittest.TestCase):
         self.assertEqual(iam.create_role.call_args.kwargs['PermissionsBoundary'], ENV['SOFTWARE_SUBAGENT_BOUNDARY_ARN'])
         self.assertEqual(json.loads(iam.put_role_policy.call_args.kwargs['PolicyDocument'])['Statement'][0]['Resource'], 'arn:aws:s3:::memory/project/one/*')
 
-    def test_reaper_terminates_expired_instance_before_cleanup(self):
-        row = dict(software=True, agent_id='sw-one', orchestrator_id='i-parent', job_id=JOB['job_id'], active=True, instance_id='i-child', expires_at=0, iam_name='role')
-        self.clients['ec2'].describe_instances.side_effect = [
-            {'Reservations': [{'Instances': [{'InstanceId': 'i-child', 'State': {'Name': 'running'}}]}]},
-            {'Reservations': [{'Instances': [{'InstanceId': 'i-parent', 'State': {'Name': 'running'}}]}]},
-        ]
-        with patch.object(software, 'cleanup') as cleanup:
-            software.reconcile_agent(row)
-            self.clients['ec2'].terminate_instances.assert_called_once_with(InstanceIds=['i-child'])
-            cleanup.assert_not_called()
+    def test_termination_event_cleans_iam_after_releasing_slot(self):
+        row = dict(software=True, agent_id='sw-one', orchestrator_id='i-parent', job_id=JOB['job_id'], active=True, instance_id='i-child', iam_name='role')
+        with patch.object(handler, '_terminal_projection', return_value={}), patch.object(handler, '_audit'), patch.object(software, 'cleanup') as cleanup:
+            handler._handle_termination({'detail': {'instance-id': 'i-child'}}, agent=row)
+            self.clients['dynamodb'].transact_write_items.assert_called_once()
+            cleanup.assert_called_once_with(row)
 
-    def test_reaper_releases_expired_provisioning_without_vm(self):
-        row = dict(software=True, agent_id='sw-one', orchestrator_id='i-parent', job_id=JOB['job_id'], active=True, expires_at=0, iam_name='role')
-        self.clients['ec2'].describe_instances.return_value = {'Reservations': []}
-        with patch.object(handler, '_release_failed_launch') as release, patch.object(software, 'cleanup') as cleanup:
-            software.reconcile_agent(row)
-            release.assert_called_once()
+    def test_duplicate_termination_retries_iam_cleanup_without_releasing_twice(self):
+        row = dict(software=True, agent_id='sw-one', orchestrator_id='i-parent', job_id=JOB['job_id'], active=False, instance_id='i-child', iam_name='role')
+        self.clients['dynamodb'].transact_write_items.side_effect = ClientError({'Error': {'Code': 'TransactionCanceledException'}}, 'TransactWriteItems')
+        self.clients['table'].get_item.return_value = {'Item': row}
+        with patch.object(handler, '_terminal_projection', return_value={}), patch.object(software, 'cleanup') as cleanup:
+            result = handler._handle_termination({'detail': {'instance-id': 'i-child'}}, agent=row)
+            self.assertEqual(result['reason'], 'already_reconciled')
+            cleanup.assert_called_once_with(row)
+
+    def test_lost_launch_response_is_resolved_by_termination_event_tags(self):
+        row = dict(software=True, agent_id='sw-one', orchestrator_id='i-parent', job_id=JOB['job_id'], active=True, iam_name='role')
+        self.clients['ec2'].describe_instances.return_value = {'Reservations': [{'Instances': [{'Tags': [
+            {'Key': 'ManagedBy', 'Value': 'subagent-manager'}, {'Key': 'AgentId', 'Value': 'sw-one'}, {'Key': 'OrchestratorId', 'Value': 'i-parent'},
+        ]}]}]}
+        self.clients['table'].get_item.return_value = {'Item': row}
+        with patch.object(handler, '_find_agent_by_instance', return_value=None), patch.object(handler, '_terminal_projection', return_value={}), patch.object(handler, '_audit'), patch.object(software, 'cleanup') as cleanup:
+            self.assertTrue(handler._handle_termination({'detail': {'instance-id': 'i-child'}})['reconciled'])
             cleanup.assert_called_once_with(row)
 
     def test_description_requires_valid_nonblank_utf8_and_is_bounded(self):
