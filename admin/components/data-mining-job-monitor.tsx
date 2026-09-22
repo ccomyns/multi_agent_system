@@ -206,7 +206,7 @@ export function DataMiningJobMonitor({ jobId }: { jobId: string }) {
           <strong>Input Task:</strong> {task}
         </div>
 
-        {snapshot.orchestratorError ? (
+        {jobType !== "software_builder" && snapshot.orchestratorError ? (
           <div className="orchestrator-failure" role="alert">
             <AlertTriangle size={15} aria-hidden="true" />
             <span>{snapshot.orchestratorError}</span>

@@ -242,7 +242,7 @@ export function AgentTelemetryDetail({
             {error ? <div className="telemetry-refresh-warning">{error} Retrying automatically.</div> : null}
             {payload.outputUri ? <div className="agent-detail-task"><strong>Output folder:</strong> {payload.outputUri}</div> : null}
             <div className="agent-detail-task"><strong>Task:</strong> {payload.task}</div>
-            {payload.error ? (
+            {payload.actorType !== "orchestrator" && payload.error ? (
               <div className="agent-detail-run-error" role="alert">
                 <strong>Run error</strong>
                 <p>{payload.error}</p>
@@ -261,6 +261,13 @@ export function AgentTelemetryDetail({
               <h2>Token usage</h2>
               {telemetry ? <TokenBreakdown usage={telemetry.usage} /> : <p>Token usage was not recorded for this run.</p>}
             </section>
+
+            {payload.actorType === "orchestrator" && payload.error ? (
+              <div className="agent-detail-run-error" role="alert">
+                <strong>Run error</strong>
+                <p>{payload.error}</p>
+              </div>
+            ) : null}
 
             <section className="telemetry-section telemetry-timeline-section">
               <h2>Checkpoint timeline</h2>

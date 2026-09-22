@@ -79,6 +79,37 @@ locals {
   software_builder_orchestrator_bootstrap = <<-EOT
     ${local.orchestrator_environment_bootstrap}
 
+    # Patch the AMI between jobs; package maintenance must not restart a live runner.
+    install -d -m 0755 /etc/needrestart/conf.d
+    cat > /etc/needrestart/conf.d/multi-agent.conf <<'CONF'
+    $nrconf{override_rc}{qr(^multi-agent-orchestrator\.service$)} = 0;
+    CONF
+    cat > /etc/apt/apt.conf.d/99-multi-agent <<'CONF'
+    APT::Periodic::Enable "0";
+    Unattended-Upgrade::Automatic-Reboot "false";
+    CONF
+    systemctl mask --now apt-daily.timer apt-daily-upgrade.timer
+    systemctl mask apt-daily.service apt-daily-upgrade.service
+    # A deliberate service restart sends SIGTERM. Do not power off the VM while
+    # its replacement runner resumes; normal completion/failure still shuts down.
+    install -d -m 0755 /etc/systemd/system/multi-agent-orchestrator.service.d
+    cat > /etc/systemd/system/multi-agent-orchestrator.service.d/recovery.conf <<'CONF'
+    [Service]
+    ExecStopPost=
+    ExecStopPost=+/bin/sh -c 'if [ "$EXIT_CODE" = killed ] && [ "$EXIT_STATUS" = TERM ]; then exit 0; fi; /sbin/shutdown -h now'
+    CONF
+    systemctl daemon-reload
+    # Let any update that raced cloud-init finish instead of killing dpkg.
+    maintenance_deadline=$((SECONDS + 900))
+    while systemctl is-active --quiet apt-daily.service apt-daily-upgrade.service; do
+      if (( SECONDS >= maintenance_deadline )); then
+        echo "Package maintenance did not finish before job startup" >&2
+        shutdown -h now
+        exit 1
+      fi
+      sleep 5
+    done
+
     cat >> /etc/multi-agent/orchestrator.env <<ENV
     PROJECT_CREDENTIALS_BROKER_FUNCTION_NAME=${aws_lambda_function.project_credentials_broker.function_name}
     GIT_AUTHOR_NAME=${jsonencode(var.software_builder_git_author_name)}

@@ -324,8 +324,6 @@ class SoftwareOrchestratorRun:
         return RuntimeError(f"{label} failed" + (f": {detail}" if detail else ""))
 
     def checkout_repository(self) -> dict[str, Any]:
-        if self.repository_root.exists():
-            raise RuntimeError("the software repository workspace already exists")
         if not self.credential_helper.is_file():
             raise RuntimeError(f"the GitHub credential helper is missing: {self.credential_helper}")
 
@@ -334,6 +332,29 @@ class SoftwareOrchestratorRun:
         repository = quote(credentials.name, safe="")
         remote_url = f"https://github.com/{owner}/{repository}.git"
 
+        if self.repository_root.exists():
+            if (self.repository_root.is_symlink()
+                    or not (self.repository_root / ".git").is_dir()
+                    or (self.repository_root / ".git").is_symlink()
+                    or Path(self._git("rev-parse", "--show-toplevel")).resolve() != self.repository_root.resolve()
+                    or self._git("remote") != "origin"
+                    or self._git("remote", "get-url", "--all", "origin") != remote_url
+                    or self._git("remote", "get-url", "--push", "--all", "origin") != remote_url):
+                raise RuntimeError("existing workspace does not match the assigned GitHub repository")
+            LOG.info("resuming existing software repository workspace")
+        else:
+            self.clone_repository(credentials, remote_url)
+
+        self.configure_repository()
+        self.repository_credentials = credentials
+        self.repository_id = credentials.repository_id
+        self.repository_full_name = credentials.repository_full_name
+        return {
+            "id": credentials.repository_id,
+            "full_name": credentials.repository_full_name,
+        }
+
+    def clone_repository(self, credentials: RepositoryCredentials, remote_url: str) -> None:
         descriptor, askpass_name = tempfile.mkstemp(
             prefix="github-askpass-",
             dir=self.job_root,
@@ -372,14 +393,6 @@ class SoftwareOrchestratorRun:
 
         if not (self.repository_root / ".git").is_dir():
             raise RuntimeError("git clone completed without creating a repository")
-        self.configure_repository()
-        self.repository_credentials = credentials
-        self.repository_id = credentials.repository_id
-        self.repository_full_name = credentials.repository_full_name
-        return {
-            "id": credentials.repository_id,
-            "full_name": credentials.repository_full_name,
-        }
 
     def start_github_token_refresh(self) -> None:
         self.github_token_refresher = GitHubTokenRefresher(

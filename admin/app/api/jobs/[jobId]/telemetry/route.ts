@@ -15,6 +15,7 @@ import {
   controlPlaneEvent,
   mergeTelemetryEvents,
   readAgentTelemetry,
+  readOptionalS3Text,
 } from "@/lib/telemetry-server";
 
 export const runtime = "nodejs";
@@ -63,6 +64,16 @@ export async function GET(
       `jobs/${jobId}/orchestrator/telemetry`,
     );
     const terminal = job.status === "completed" || job.status === "failed";
+    let runError: string | null = null;
+    if (jobType === "software_builder" && job.status === "failed") {
+      const failureText = await readOptionalS3Text(
+        s3, bucket, `jobs/${jobId}/orchestrator/status/failed.json`,
+      );
+      const failure = failureText ? JSON.parse(failureText) : null;
+      runError = typeof failure?.error === "string" && failure.error.trim()
+        ? failure.error
+        : "The orchestrator ended before completing the job.";
+    }
     const payload: AgentTelemetryResponse = {
       actorType: "orchestrator",
       agentId: null,
@@ -70,6 +81,7 @@ export async function GET(
       publishedWebsite: parsePublishedWebsite(job.published_website),
       task: typeof job.original_task === "string" ? job.original_task : "Task unavailable",
       status: typeof job.status === "string" ? job.status : "unknown",
+      error: runError,
       isTerminal: terminal,
       telemetry: telemetry.telemetry,
       events: mergeTelemetryEvents(telemetry.events, [

@@ -746,6 +746,36 @@ class SoftwareOrchestratorRunnerTests(unittest.TestCase):
                 )
             )
 
+    def test_restart_preserves_checkout_and_conversation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            subprocess.run(["git", "init", str(run.repository_root)], check=True, capture_output=True)
+            run._git("remote", "add", "origin", "https://github.com/mas-workspace/empty-repo.git")
+            work = run.repository_root / "unfinished.txt"
+            work.write_text("work in progress")
+            state = run.job_root / "codex-conversation.json"
+            state.write_text('{"thread_id":"same-thread"}')
+            with patch.object(run, "request_repository_credentials", return_value=self.credentials()), \
+                    patch.object(run, "clone_repository") as clone:
+                run.checkout_repository()
+                clone.assert_not_called()
+            self.assertEqual(work.read_text(), "work in progress")
+            self.assertEqual(json.loads(state.read_text())["thread_id"], "same-thread")
+            self.assertEqual(run.repository_full_name, self.credentials().repository_full_name)
+
+    def test_restart_rejects_wrong_repository_without_modifying_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = self.make_run(Path(temporary))
+            subprocess.run(["git", "init", str(run.repository_root)], check=True, capture_output=True)
+            run._git("remote", "add", "origin", "https://github.com/mas-workspace/wrong-repo.git")
+            with patch.object(run, "request_repository_credentials", return_value=self.credentials()), \
+                    patch.object(run, "clone_repository") as clone:
+                with self.assertRaisesRegex(RuntimeError, "does not match"):
+                    run.checkout_repository()
+                clone.assert_not_called()
+            self.assertEqual(run._git("remote", "get-url", "origin"),
+                             "https://github.com/mas-workspace/wrong-repo.git")
+
     def test_codex_starts_at_repository_root_with_scoped_subagent_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run = self.make_run(Path(temporary))

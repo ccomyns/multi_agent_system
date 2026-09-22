@@ -115,3 +115,18 @@ JSON structures for their gathered data, upload it as `.json` files to their
 assigned S3 folder, and document those files in `description.md`; the separate software worker
 runtime resumes Codex until this file is valid or the total 30-minute deadline
 expires. See the root README for storage, cleanup and deployment details.
+
+## Host maintenance and restart recovery
+
+Software orchestrator launch-time setup disables scheduled APT updates and
+automatic reboots, and excludes the orchestrator from `needrestart` service
+restarts. Any package update already running finishes before the job starts.
+Keep the AMI patched through periodic image rebuilds; running job VMs do not
+install scheduled updates. These launch-time controls work with the existing AMI.
+
+A service restart that terminates the runner with SIGTERM does not trigger the
+normal shutdown hook. A replacement runner refreshes credentials, validates the
+existing checkout's root and fetch/push remote against its trusted assignment,
+and preserves its files, uncommitted changes, and saved Codex conversation.
+Normal completion and failure still shut down the instance. This does not enable
+automatic service retries or recover a terminated VM's local disk.
